@@ -25,16 +25,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download amd64 binary
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: binary-linux-amd64
           run-id: ${{ github.event.workflow_run.id || github.event.inputs.run_id }}
 
-      - name: Move binaries
-        run: |
-          mv artifacts/binary-linux-amd64/main main-amd64
-          mv artifacts/binary-linux-arm64/main main-arm64
+      - name: Move amd64 binary
+        run: mv main main-amd64
+
+      - name: Download arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-linux-arm64
+          run-id: ${{ github.event.workflow_run.id || github.event.inputs.run_id }}
+
+      - name: Move arm64 binary
+        run: mv main main-arm64
 
       - name: Set up QEMU for multi-platform build
         uses: docker/setup-qemu-action@v3
