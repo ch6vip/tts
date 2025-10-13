@@ -6,8 +6,6 @@ import (
 	"github.com/google/uuid"
 	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -108,51 +106,6 @@ func truncateForLog(text string, maxLength int) string {
 	// 计算开头和结尾各显示多少字符
 	halfLength := maxLength / 2
 	return string(runes[:halfLength]) + "..." + string(runes[len(runes)-halfLength:])
-}
-
-// audioMerge 音频合并
-func audioMerge(audioSegments [][]byte) ([]byte, error) {
-	if len(audioSegments) == 0 {
-		return nil, fmt.Errorf("没有音频片段可合并")
-	}
-
-	// 使用 ffmpeg 合并音频
-	tempDir, err := os.MkdirTemp("", "audio_merge_")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(tempDir)
-
-	listFile := filepath.Join(tempDir, "concat.txt")
-	lf, err := os.Create(listFile)
-	if err != nil {
-		return nil, err
-	}
-
-	for i, seg := range audioSegments {
-		segFile := filepath.Join(tempDir, fmt.Sprintf("seg_%d.mp3", i))
-		if err := os.WriteFile(segFile, seg, 0644); err != nil {
-			return nil, err
-		}
-		if _, err := lf.WriteString(fmt.Sprintf("file '%s'\n", segFile)); err != nil {
-			return nil, err
-		}
-	}
-	lf.Close()
-
-	outputFile := filepath.Join(tempDir, "output.mp3")
-
-	cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", outputFile)
-	if err := cmd.Run(); err != nil {
-		return nil, err
-	}
-
-	mergedData, err := os.ReadFile(outputFile)
-	if err != nil {
-		return nil, err
-	}
-	logrus.WithField("size", formatFileSize(len(mergedData))).Info("使用ffmpeg合并完成")
-	return mergedData, nil
 }
 
 // formatFileSize 格式化文件大小
