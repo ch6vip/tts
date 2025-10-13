@@ -11,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"tts/internal/config"
 	"tts/internal/http/routes"
+	"tts/internal/tts"
 )
 
 // App 表示整个TTS应用程序
@@ -25,6 +26,16 @@ func NewApp(cfg *config.Config) (*App, error) {
 	ttsService, err := routes.InitializeServices(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("初始化服务失败: %w", err)
+	}
+
+	// 如果启用了缓存，则包装原始服务
+	if cfg.Cache.Enabled {
+		logrus.Info("启用TTS缓存")
+		ttsService = tts.NewCachingService(
+			ttsService,
+			time.Duration(cfg.Cache.ExpirationMinutes)*time.Minute,
+			time.Duration(cfg.Cache.CleanupIntervalMinutes)*time.Minute,
+		)
 	}
 
 	// 设置Gin路由

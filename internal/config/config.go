@@ -17,12 +17,20 @@ type Config struct {
 	OpenAI OpenAIConfig `mapstructure:"openai"`
 	SSML   SSMLConfig   `mapstructure:"ssml"`
 	Log    LogConfig    `mapstructure:"log"`
+	Cache  CacheConfig  `mapstructure:"cache"`
 }
 
 // LogConfig 包含日志配置
 type LogConfig struct {
 	Level  string `mapstructure:"level"`
 	Format string `mapstructure:"format"`
+}
+
+// CacheConfig 包含缓存配置
+type CacheConfig struct {
+	Enabled                bool `mapstructure:"enabled"`
+	ExpirationMinutes      int  `mapstructure:"expiration_minutes"`
+	CleanupIntervalMinutes int  `mapstructure:"cleanup_interval_minutes"`
 }
 
 // OpenAIConfig 包含OpenAI API配置
