@@ -18,15 +18,74 @@
 
 ### Docker 部署
 
-我们提供已构建好的多平台 Docker 镜像 (`linux/amd64`, `linux/arm64`)。
+我们提供多种方式来部署 TTS 服务。
+
+#### 方式一：使用 Docker Compose (推荐)
+
+这是最简单且推荐的部署方式，便于管理和自定义配置。
+
+1.  **确保您已安装 Docker Compose。**
+2.  在项目根目录下，我们已经为您提供了一个 `docker-compose.yml` 文件。
+3.  执行以下命令启动服务：
+    ```shell
+    docker-compose up -d
+    ```
+    服务将在后台运行。如需自定义配置（例如修改端口、挂载配置文件或设置环境变量），请直接编辑 `docker-compose.yml` 文件，文件内包含了详细的注释和示例。
+
+#### 方式二：使用 `docker run` 命令
+
+如果您不希望使用 Docker Compose，也可以直接使用 `docker run` 命令。
+
+##### 1. 快速部署
+
+这是最简单的启动方式，直接从 Docker Hub 拉取并运行镜像。
+
+- **默认端口 (8080):**
+  ```shell
+  docker run -d -p 8080:8080 --name=tts zuoban/zb-tts:latest
+  ```
+
+- **映射到不同主机端口 (例如 9000):**
+  ```shell
+  docker run -d -p 9000:8080 --name=tts zuoban/zb-tts:latest
+  ```
+
+##### 2. 高级用法 - 自定义配置
+
+您可以通过挂载配置文件或使用环境变量来覆盖默认配置。
+
+- **通过挂载配置文件:**
+  将您本地的 `config.yaml` 文件挂载到容器的 `/app/configs/config.yaml` 路径。
+  ```shell
+  # 假设您的配置文件位于 /path/to/your/config.yaml
+  docker run -d -p 8080:8080 \
+    -v /path/to/your/config.yaml:/app/configs/config.yaml \
+    --name=tts zuoban/zb-tts:latest
+  ```
+
+- **通过环境变量:**
+  根据配置规则（将 `.` 替换为 `_` 并大写），使用 `-e` 参数来设置环境变量。
+  ```shell
+  # 示例：修改服务端口并设置 OpenAI API 密钥
+  docker run -d -p 9000:9000 \
+    -e SERVER_PORT=9000 \
+    -e OPENAI_API_KEY="your_openai_api_key" \
+    --name=tts zuoban/zb-tts:latest
+  ```
+
+#### 方式三：本地构建 Docker 镜像
+
+如果您需要基于源码进行自定义修改，可以从 `Dockerfile` 在本地构建镜像。
 
 ```shell
-docker run -d -p 8080:8080 --name=tts ch6vip/ch6vip-tts
+# 从项目根目录构建
+docker build -t your-custom-tts-image .
 ```
+构建完成后，您可以使用与上面相同的 `docker run` 或 Docker Compose 命令来运行您本地构建的镜像（只需将 `image` 字段指向 `your-custom-tts-image`）。
 
 部署完成后，您可以：
-- 访问 `http://localhost:8080` 使用 Web 界面。
-- 访问 `http://localhost:8080/api-doc` 查看 API 文档。
+- 访问 `http://localhost:<映射的主机端口>` 使用 Web 界面。
+- 访问 `http://localhost:<映射的主机端口>/api-doc` 查看 API 文档。
 
 ## 🛠️ API 使用
 
