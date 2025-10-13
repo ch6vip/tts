@@ -225,11 +225,11 @@ func (c *Client) SynthesizeSpeech(ctx context.Context, req models.TTSRequest) (*
 // createTTSRequest 创建并执行TTS请求，返回HTTP响应
 func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*http.Response, error) {
 	// 参数验证
-	if req.Text == "" {
-		return nil, errors.New("文本不能为空")
+	if req.Text == "" && req.SSML == "" {
+		return nil, errors.New("文本或SSML不能为空")
 	}
 
-	if len(req.Text) > c.maxTextLength {
+	if req.SSML == "" && len(req.Text) > c.maxTextLength {
 		return nil, fmt.Errorf("文本长度超过限制 (%d > %d)", len(req.Text), c.maxTextLength)
 	}
 
@@ -254,18 +254,23 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 		pitch = c.defaultPitch
 	}
 
-	// 提取语言
-	locale := "zh-CN" // 默认
-	parts := strings.Split(voice, "-")
-	if len(parts) >= 2 {
-		locale = parts[0] + "-" + parts[1]
+	var ssml string
+	if req.SSML != "" {
+		ssml = req.SSML
+	} else {
+		// 提取语言
+		locale := "zh-CN" // 默认
+		parts := strings.Split(voice, "-")
+		if len(parts) >= 2 {
+			locale = parts[0] + "-" + parts[1]
+		}
+
+		// 对文本进行HTML转义，防止XML解析错误
+		escapedText := c.ssmProcessor.EscapeSSML(req.Text)
+
+		// 准备SSML内容
+		ssml = fmt.Sprintf(ssmlTemplate, locale, voice, style, rate, pitch, escapedText)
 	}
-
-	// 对文本进行HTML转义，防止XML解析错误
-	escapedText := c.ssmProcessor.EscapeSSML(req.Text)
-
-	// 准备SSML内容
-	ssml := fmt.Sprintf(ssmlTemplate, locale, voice, style, rate, pitch, escapedText)
 
 	// 获取端点信息
 	endpoint, err := c.getEndpoint(ctx)

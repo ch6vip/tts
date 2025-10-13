@@ -125,25 +125,39 @@ func NewTTSHandler(service tts.Service, cfg *config.Config) *TTSHandler {
 func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, startTime time.Time, parseTime time.Duration, requestType string) {
 	// 验证必要参数
 	logger := getLoggerWithTraceID(c)
-	if req.Text == "" {
-		logger.Error("错误: 未提供文本参数")
-		_ = c.Error(fmt.Errorf("%w: 必须提供文本参数", custom_errors.ErrInvalidInput))
+	if req.Text == "" && req.SSML == "" {
+		logger.Error("错误: 未提供 text 或 ssml 参数")
+		_ = c.Error(fmt.Errorf("%w: 必须提供 text 或 ssml 参数", custom_errors.ErrInvalidInput))
+		return
+	}
+
+	if req.Text != "" && req.SSML != "" {
+		logger.Error("错误: 不能同时提供 text 和 ssml 参数")
+		_ = c.Error(fmt.Errorf("%w: 不能同时提供 text 和 ssml 参数", custom_errors.ErrInvalidInput))
 		return
 	}
 
 	// 使用默认值填充空白参数
 	h.fillDefaultValues(&req)
 
+	var inputText string
+	isSSML := req.SSML != ""
+	if isSSML {
+		inputText = req.SSML
+	} else {
+		inputText = req.Text
+	}
+
 	// 检查文本长度
-	reqTextLength := utf8.RuneCountInString(req.Text)
+	reqTextLength := utf8.RuneCountInString(inputText)
 	if reqTextLength > h.config.TTS.MaxTextLength {
 		_ = c.Error(fmt.Errorf("%w: 文本长度超过 %d 字符的限制", custom_errors.ErrInvalidInput, h.config.TTS.MaxTextLength))
 		return
 	}
 
-	// 检查是否需要分段处理
+	// 检查是否需要分段处理 (SSML不支持分段)
 	segmentThreshold := h.config.TTS.SegmentThreshold
-	if reqTextLength > segmentThreshold && reqTextLength <= h.config.TTS.MaxTextLength {
+	if !isSSML && reqTextLength > segmentThreshold && reqTextLength <= h.config.TTS.MaxTextLength {
 		logger.WithFields(logrus.Fields{
 			"text_length": reqTextLength,
 			"threshold":   segmentThreshold,
@@ -219,6 +233,7 @@ func (h *TTSHandler) HandleTTSGet(c *gin.Context) {
 	// 从URL参数获取
 	req := models.TTSRequest{
 		Text:  c.Query("t"),
+		SSML:  c.Query("ssml"),
 		Voice: c.Query("v"),
 		Rate:  c.Query("r"),
 		Pitch: c.Query("p"),

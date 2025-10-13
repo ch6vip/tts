@@ -1,6 +1,9 @@
 name: Docker Publish Pipeline
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
   # 触发器一：当 ci.yml 在 main 分支成功结束后自动触发
   workflow_run:
     workflows: ["CI Pipeline"]
@@ -16,7 +19,7 @@ jobs:
   build-and-push:
     name: Build and Push Docker Image
     # 修改这里的 if 条件，使其同时兼容两种触发方式
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -50,6 +53,14 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKER_USERNAME }}/ch6vip-tts
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
