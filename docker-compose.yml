@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   tts:
-    image: zuoban/zb-tts:latest
+    image: ch6vip/ch6vip-tts:main
     ports:
       - "8080:8080"
     restart: always

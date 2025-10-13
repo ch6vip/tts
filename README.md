@@ -42,12 +42,12 @@
 
 - **默认端口 (8080):**
   ```shell
-  docker run -d -p 8080:8080 --name=tts zuoban/zb-tts:latest
+  docker run -d -p 8080:8080 --name=tts ch6vip/ch6vip-tts:main
   ```
 
 - **映射到不同主机端口 (例如 9000):**
   ```shell
-  docker run -d -p 9000:8080 --name=tts zuoban/zb-tts:latest
+  docker run -d -p 9000:8080 --name=tts ch6vip/ch6vip-tts:main
   ```
 
 ##### 2. 高级用法 - 自定义配置
@@ -60,7 +60,7 @@
   # 假设您的配置文件位于 /path/to/your/config.yaml
   docker run -d -p 8080:8080 \
     -v /path/to/your/config.yaml:/app/configs/config.yaml \
-    --name=tts zuoban/zb-tts:latest
+    --name=tts ch6vip/ch6vip-tts:main
   ```
 
 - **通过环境变量:**
@@ -70,7 +70,7 @@
   docker run -d -p 9000:9000 \
     -e SERVER_PORT=9000 \
     -e OPENAI_API_KEY="your_openai_api_key" \
-    --name=tts zuoban/zb-tts:latest
+    --name=tts ch6vip/ch6vip-tts:main
   ```
 
 #### 方式三：本地构建 Docker 镜像
