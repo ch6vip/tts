@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
