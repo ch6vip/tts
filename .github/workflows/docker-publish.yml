@@ -1,9 +1,6 @@
 name: Docker Publish Pipeline
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
   workflow_run:
     workflows: ["CI Pipeline"]
     types:
@@ -11,6 +8,10 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'The ID of the CI Pipeline workflow run to get artifacts from'
+        required: true
 
 env:
   GO_VERSION: '1.24'
@@ -28,6 +29,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          run-id: ${{ github.event.workflow_run.id || github.event.inputs.run_id }}
 
       - name: Move binaries
         run: |
