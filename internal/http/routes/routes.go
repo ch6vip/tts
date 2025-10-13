@@ -1,11 +1,14 @@
 package routes
 
 import (
+	"io/fs"
+	"net/http"
 	"tts/internal/config"
 	"tts/internal/http/handlers"
 	"tts/internal/http/middleware"
 	"tts/internal/tts"
 	"tts/internal/tts/microsoft"
+	"tts/web"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,7 +23,7 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 	voicesHandler := handlers.NewVoicesHandler(ttsService)
 
 	// 创建页面处理器
-	pagesHandler, err := handlers.NewPagesHandler("./web/templates", cfg)
+	pagesHandler, err := handlers.NewPagesHandler(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +42,12 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 	}
 
 	// 设置静态文件服务
-	baseRouter.Static("/static", "./web/static")
+	// 设置静态文件服务
+	staticRoot, err := fs.Sub(web.StaticFS, "static")
+	if err != nil {
+		return nil, err
+	}
+	baseRouter.StaticFS("/static", http.FS(staticRoot))
 
 	// 设置主页路由
 	baseRouter.GET("/", pagesHandler.HandleIndex)

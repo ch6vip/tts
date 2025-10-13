@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"html/template"
-	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 	"tts/internal/config"
+	"tts/web"
 )
 
 // PagesHandler 处理页面请求
@@ -15,9 +15,9 @@ type PagesHandler struct {
 }
 
 // NewPagesHandler 创建一个新的页面处理器
-func NewPagesHandler(templatesDir string, cfg *config.Config) (*PagesHandler, error) {
+func NewPagesHandler(cfg *config.Config) (*PagesHandler, error) {
 	// 解析所有模板文件
-	templates, err := template.ParseGlob(filepath.Join(templatesDir, "*.html"))
+	templates, err := template.ParseFS(web.TemplatesFS, "templates/*.html", "templates/shared/*.html")
 	if err != nil {
 		return nil, err
 	}

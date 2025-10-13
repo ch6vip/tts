@@ -4,7 +4,6 @@ FROM gcr.io/distroless/base-debian12
 # 复制应用程序和资源
 ARG TARGETARCH
 COPY main-${TARGETARCH} /app/main
-COPY web /app/web
 COPY configs /app/configs
 
 # 设置工作目录
