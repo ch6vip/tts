@@ -308,7 +308,7 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 			"status_code": resp.StatusCode,
 			"body":        string(body),
 		}).Error("TTS API错误")
-		return nil, custom_errors.NewUpstreamError(resp.StatusCode, "TTS API 错误", fmt.Errorf(string(body)))
+		return nil, custom_errors.NewUpstreamError(resp.StatusCode, "TTS API 错误", errors.New(string(body)))
 	}
 
 	return resp, nil
