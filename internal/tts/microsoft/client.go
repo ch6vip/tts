@@ -223,6 +223,19 @@ func (c *Client) SynthesizeSpeech(ctx context.Context, req models.TTSRequest) (*
 	}, nil
 }
 
+// preprocessText 移除文本中常见的Markdown标记。
+func preprocessText(text string) string {
+	// 使用NewReplacer比多次调用ReplaceAll更高效。
+	replacer := strings.NewReplacer(
+		"**", "",
+		"*", "",
+		"#", "",
+		">", "",
+		"~", "",
+	)
+	return replacer.Replace(text)
+}
+
 // createTTSRequest 创建并执行TTS请求，返回HTTP响应
 func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*http.Response, error) {
 	// 参数验证
@@ -266,8 +279,10 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 			locale = parts[0] + "-" + parts[1]
 		}
 
-		// 对文本进行HTML转义，防止XML解析错误
-		escapedText := c.ssmProcessor.EscapeSSML(req.Text)
+		// 预处理文本以删除Markdown
+		processedText := preprocessText(req.Text)
+		// 对文本进行SSML转义，防止XML解析错误
+		escapedText := c.ssmProcessor.EscapeSSML(processedText)
 
 		// 准备SSML内容
 		ssml = fmt.Sprintf(ssmlTemplate, locale, voice, style, rate, pitch, escapedText)
