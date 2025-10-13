@@ -498,11 +498,14 @@ func (h *TTSHandler) HandleReader(context *gin.Context) {
 	encoder := json.NewEncoder(context.Writer)
 	encoder.SetEscapeHTML(false)
 	context.Status(http.StatusOK)
-	encoder.Encode(models.ReaderResponse{
+	if err := encoder.Encode(models.ReaderResponse{
 		Id:   time.Now().Unix(),
 		Name: displayName,
 		Url:  url,
-	})
+	}); err != nil {
+		log.Printf("写入响应失败: %v", err)
+		context.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "写入响应失败"})
+	}
 }
 
 // HandleIFreeTime 处理IFreeTime应用请求

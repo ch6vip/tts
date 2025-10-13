@@ -101,7 +101,7 @@ func (c *Client) getEndpoint(ctx context.Context) (map[string]interface{}, error
 		return nil, errors.New("jwt 中缺少 exp 字段")
 	}
 	expTime := time.Unix(exp, 0)
-	log.Println("jwt  距到期时间:", expTime.Sub(time.Now()))
+	log.Println("jwt  距到期时间:", time.Until(expTime))
 
 	// 更新缓存
 	c.endpointMu.Lock()

@@ -70,8 +70,10 @@ func GetEndpoint() (map[string]interface{}, error) {
 		req.Header.Set(k, v)
 	}
 
-	headerJson, err := json.Marshal(&headers)
-	fmt.Printf("GetEndpoint -> url: %s, headers: %v\n", endpointURL, string(headerJson))
+	if gin.IsDebugging() {
+		headerJson, _ := json.Marshal(&headers)
+		fmt.Printf("GetEndpoint -> url: %s, headers: %v\n", endpointURL, string(headerJson))
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
