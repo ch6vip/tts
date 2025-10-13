@@ -8,8 +8,13 @@ function saveApiKey() {
             // 保存到localStorage
             localStorage.setItem('apiKey', apiKey);
 
-            // 显示成功消息
-            showCustomAlert('API Key 已成功保存', 'success');
+            // 显示成功消息和安全提示
+            showCustomAlert(
+                'API Key 已成功保存到浏览器本地存储 (localStorage)。请注意：此密钥仅存储在您的设备上，但建议不要在公共或共享设备上保存敏感信息。',
+                'success',
+                'API Key 已保存',
+                5000
+            );
 
             // 隐藏API Key输入区域
             if (apiKeyGroup) {

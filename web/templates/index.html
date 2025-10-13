@@ -153,12 +153,28 @@
             <div class="lg:col-span-3">
                 <div class="card p-6 sm:p-8 rounded-xl">
                     <div class="mb-6">
-                        <label for="text" class="block text-sm font-medium text-gray-400 mb-2">输入内容</label>
+                        <div class="flex justify-between items-center mb-2">
+                            <label for="text" class="block text-sm font-medium text-gray-400">输入内容</label>
+                            <div class="flex items-center gap-2">
+                                <label class="text-xs text-gray-500">输入模式:</label>
+                                <button id="toggleInputMode" class="btn-secondary px-3 py-1 text-xs rounded">文本模式</button>
+                            </div>
+                        </div>
                         <div class="relative">
                             <textarea id="text" rows="10" class="form-input w-full p-3 rounded-md shadow-sm text-base" placeholder="在此输入需要转换的文本..."></textarea>
+                            <textarea id="ssml" rows="10" class="form-input w-full p-3 rounded-md shadow-sm text-base hidden" placeholder="在此输入 SSML 内容...&#10;&#10;示例:&#10;<speak>&#10;  <voice name='zh-CN-XiaoxiaoNeural'>&#10;    你好，<prosody rate='slow'>这是慢速语音</prosody>，&#10;    <prosody pitch='high'>这是高音调</prosody>。&#10;  </voice>&#10;</speak>"></textarea>
                             <div class="absolute bottom-3 right-3 text-xs text-gray-500">
                                 <span id="charCount">0</span> / 5000
                             </div>
+                        </div>
+                        <div id="ssmlHelp" class="hidden mt-2 text-xs text-gray-500">
+                            <p class="mb-1">💡 SSML 提示：</p>
+                            <ul class="list-disc list-inside space-y-1">
+                                <li>使用 &lt;prosody rate="..."&gt; 调整语速（x-slow, slow, medium, fast, x-fast）</li>
+                                <li>使用 &lt;prosody pitch="..."&gt; 调整音调（x-low, low, medium, high, x-high）</li>
+                                <li>使用 &lt;break time="..."&gt; 添加停顿（如 500ms 或 1s）</li>
+                                <li>使用 &lt;emphasis level="..."&gt; 强调文本（strong, moderate, reduced）</li>
+                            </ul>
                         </div>
                     </div>
 
@@ -254,8 +270,43 @@
             defaultStyle: ""
         };
 
+        // SSML 模式切换功能
+        let isSSMLMode = false;
+
         // 按钮加载状态处理
         document.addEventListener('DOMContentLoaded', () => {
+            // SSML 模式切换
+            const toggleInputModeBtn = document.getElementById('toggleInputMode');
+            const textInput = document.getElementById('text');
+            const ssmlInput = document.getElementById('ssml');
+            const ssmlHelp = document.getElementById('ssmlHelp');
+            
+            if (toggleInputModeBtn) {
+                toggleInputModeBtn.addEventListener('click', () => {
+                    isSSMLMode = !isSSMLMode;
+                    
+                    if (isSSMLMode) {
+                        textInput.classList.add('hidden');
+                        ssmlInput.classList.remove('hidden');
+                        ssmlHelp.classList.remove('hidden');
+                        toggleInputModeBtn.textContent = 'SSML模式';
+                    } else {
+                        textInput.classList.remove('hidden');
+                        ssmlInput.classList.add('hidden');
+                        ssmlHelp.classList.add('hidden');
+                        toggleInputModeBtn.textContent = '文本模式';
+                    }
+                });
+            }
+
+            // 更新字符计数
+            const updateCharCount = () => {
+                const count = isSSMLMode ? ssmlInput.value.length : textInput.value.length;
+                document.getElementById('charCount').textContent = count;
+            };
+            
+            textInput.addEventListener('input', updateCharCount);
+            ssmlInput.addEventListener('input', updateCharCount);
             const speakButton = document.getElementById('speak');
             const originalButtonContent = speakButton.innerHTML;
 
@@ -291,26 +342,33 @@
                 try {
                     // 这里需要复制app.js中的核心逻辑
                     const textInput = document.getElementById('text');
+                    const ssmlInput = document.getElementById('ssml');
                     const voiceSelect = document.getElementById('voice');
                     const styleSelect = document.getElementById('style');
                     const rateInput = document.getElementById('rate');
                     const pitchInput = document.getElementById('pitch');
                     const apiKeyInput = document.getElementById('api-key');
 
-                    const text = textInput.value.trim();
-                    if (!text) {
-                        showCustomAlert('请输入要转换的文本', 'warning');
+                    // 根据模式获取输入内容
+                    const inputText = isSSMLMode ? ssmlInput.value.trim() : textInput.value.trim();
+                    if (!inputText) {
+                        showCustomAlert(isSSMLMode ? '请输入 SSML 内容' : '请输入要转换的文本', 'warning');
                         return;
                     }
 
                     const apiKey = apiKeyInput.value.trim() || localStorage.getItem('apiKey');
-                    const params = new URLSearchParams({
-                        t: text,
-                        v: voiceSelect.value,
-                        r: rateInput.value,
-                        p: pitchInput.value,
-                        s: styleSelect.value
-                    });
+                    const params = new URLSearchParams();
+                    
+                    // 根据模式设置参数
+                    if (isSSMLMode) {
+                        params.append('ssml', inputText);
+                    } else {
+                        params.append('t', inputText);
+                        params.append('v', voiceSelect.value);
+                        params.append('r', rateInput.value);
+                        params.append('p', pitchInput.value);
+                        params.append('s', styleSelect.value);
+                    }
 
                     if (apiKey) {
                         params.append('api_key', apiKey);

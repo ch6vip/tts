@@ -2,9 +2,12 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "develop" ]
   pull_request:
     branches: [ "main" ]
+
+env:
+  GO_VERSION: '1.24'
 
 jobs:
   lint:
@@ -16,7 +19,8 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
 
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v6
@@ -34,7 +38,11 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Download dependencies
+      run: go mod download
 
     - name: Run tests
       run: go test -v -race -coverprofile=coverage.out ./...
@@ -45,33 +53,36 @@ jobs:
         file: ./coverage.out
         flags: unittests
 
-  build-linux:
-    name: Build for Linux
+  build:
+    name: Build Application
     runs-on: ubuntu-latest
     needs: test
+    strategy:
+      matrix:
+        os: [linux, windows]
+        arch: [amd64, arm64]
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
 
-    - name: Build for Linux
-      run: go build -o tts ./cmd/api
+    - name: Build binary
+      env:
+        GOOS: ${{ matrix.os }}
+        GOARCH: ${{ matrix.arch }}
+      run: |
+        OUTPUT_NAME="tts"
+        if [ "${{ matrix.os }}" = "windows" ]; then
+          OUTPUT_NAME="tts.exe"
+        fi
+        go build -ldflags="-w -s" -o ${OUTPUT_NAME} ./cmd/api
 
-
-  build-windows:
-    name: Build for Windows
-    runs-on: windows-latest
-    needs: test
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
       with:
-        go-version: '1.21'
-
-    - name: Build for Windows
-      run: go build -o tts.exe ./cmd/api
+        name: tts-${{ matrix.os }}-${{ matrix.arch }}
+        path: tts*

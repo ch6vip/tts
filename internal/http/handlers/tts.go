@@ -23,6 +23,68 @@ import (
 )
 
 var cfg = config.Get()
+// UpstreamErrorType 上游错误类型
+type UpstreamErrorType int
+
+const (
+	UpstreamAuthError UpstreamErrorType = iota
+	UpstreamTimeoutError
+	UpstreamRateLimitError
+	UpstreamInvalidRequestError
+	UpstreamServerError
+	UpstreamNetworkError
+)
+
+// classifyUpstreamError 分类上游服务错误
+func classifyUpstreamError(err error, statusCode int) UpstreamErrorType {
+	errMsg := err.Error()
+	
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return UpstreamAuthError
+	case http.StatusTooManyRequests:
+		return UpstreamRateLimitError
+	case http.StatusBadRequest:
+		return UpstreamInvalidRequestError
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
+		return UpstreamServerError
+	}
+	
+	// 根据错误消息进一步分类
+	errLower := strings.ToLower(errMsg)
+	if strings.Contains(errLower, "timeout") || strings.Contains(errLower, "deadline exceeded") {
+		return UpstreamTimeoutError
+	}
+	if strings.Contains(errLower, "connection") || strings.Contains(errLower, "network") {
+		return UpstreamNetworkError
+	}
+	if strings.Contains(errLower, "unauthorized") || strings.Contains(errLower, "authentication") {
+		return UpstreamAuthError
+	}
+	
+	return UpstreamServerError
+}
+
+// getDetailedErrorMessage 根据错误类型返回详细错误信息
+func getDetailedErrorMessage(errType UpstreamErrorType, originalErr error) string {
+	switch errType {
+	case UpstreamAuthError:
+		return "上游TTS服务认证失败，请检查API密钥配置"
+	case UpstreamTimeoutError:
+		return "上游TTS服务响应超时，请稍后重试"
+	case UpstreamRateLimitError:
+		return "上游TTS服务请求频率超限，请稍后重试"
+	case UpstreamInvalidRequestError:
+		return fmt.Sprintf("上游TTS服务拒绝请求：%v", originalErr)
+	case UpstreamServerError:
+		return "上游TTS服务暂时不可用，请稍后重试"
+	case UpstreamNetworkError:
+		return "网络连接错误，无法访问上游TTS服务"
+	default:
+		return fmt.Sprintf("上游TTS服务错误：%v", originalErr)
+	}
+}
+
 
 // getLoggerWithTraceID 从 Gin 上下文中获取带有 trace_id 的日志记录器
 func getLoggerWithTraceID(c *gin.Context) *logrus.Entry {
@@ -175,8 +237,16 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 	}).Info("TTS合成耗时")
 
 	if err != nil {
-		logger.WithError(err).Error("TTS合成失败")
-		_ = c.Error(fmt.Errorf("%w: %v", custom_errors.ErrUpstreamServiceFailed, err))
+		// 分类错误并提供详细信息
+		errType := classifyUpstreamError(err, 0)
+		detailedMsg := getDetailedErrorMessage(errType, err)
+		
+		logger.WithFields(logrus.Fields{
+			"error_type": errType,
+			"original_error": err,
+		}).Error("TTS合成失败")
+		
+		_ = c.Error(fmt.Errorf("%w: %s", custom_errors.ErrUpstreamServiceFailed, detailedMsg))
 		return
 	}
 
@@ -349,7 +419,7 @@ type sentenceSynthesisResult struct {
 	duration  time.Duration
 }
 
-// Modify the handleSegmentedTTS function to support streaming response
+// handleSegmentedTTS 处理分段TTS请求，使用流式合并减少延迟
 func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 	segmentStart := time.Now()
 	text := req.Text
@@ -377,8 +447,16 @@ func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 		return
 	}
 
-	// 创建用于收集合成结果信息的切片
-	synthResults := make(chan sentenceSynthesisResult, segmentCount)
+	// 创建有序通道用于按顺序输出音频
+	type orderedAudio struct {
+		index     int
+		audio     []byte
+		length    int
+		duration  time.Duration
+		content   string
+	}
+	
+	audioChan := make(chan orderedAudio, segmentCount)
 	errChan := make(chan error, 1)
 	var wg sync.WaitGroup
 
@@ -420,30 +498,24 @@ func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 			synthDuration := time.Since(startTime)
 
 			if err != nil {
+				// 分类错误并记录
+				errType := classifyUpstreamError(err, 0)
+				detailedMsg := getDetailedErrorMessage(errType, err)
+				
 				select {
-				case errChan <- fmt.Errorf("句子 %d 合成失败: %w", index+1, err):
+				case errChan <- fmt.Errorf("句子 %d 合成失败: %s", index+1, detailedMsg):
 				default:
 				}
 				return
 			}
 
-			// 将音频数据写入响应流
-			if _, err := c.Writer.Write(resp.AudioContent); err != nil {
-				select {
-				case errChan <- fmt.Errorf("写入响应流失败: %w", err):
-				default:
-				}
-				return
-			}
-			flusher.Flush()
-
-			// 发送合成结果信息
-			synthResults <- sentenceSynthesisResult{
-				index:     index,
-				length:    utf8.RuneCountInString(sentenceText),
-				audioSize: len(resp.AudioContent),
-				content:   truncateForLog(sentenceText, 20),
-				duration:  synthDuration,
+			// 发送音频到通道，保持顺序
+			audioChan <- orderedAudio{
+				index:    index,
+				audio:    resp.AudioContent,
+				length:   utf8.RuneCountInString(sentenceText),
+				duration: synthDuration,
+				content:  truncateForLog(sentenceText, 20),
 			}
 		}(i, sentence)
 	}
@@ -451,29 +523,53 @@ func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 	// 等待所有goroutine完成
 	go func() {
 		wg.Wait()
-		close(synthResults)
+		close(audioChan)
 	}()
 
-	// 收集并记录结果
+	// 按顺序接收并流式输出音频
+	audioMap := make(map[int]orderedAudio)
+	nextIndex := 0
 	var totalAudioSize int
 	var results []sentenceSynthesisResult
-	for result := range synthResults {
-		results = append(results, result)
-		totalAudioSize += result.audioSize
+
+	for audio := range audioChan {
+		audioMap[audio.index] = audio
+		
+		// 按顺序输出已准备好的音频片段
+		for {
+			if orderedAudio, exists := audioMap[nextIndex]; exists {
+				// 立即写入响应流，实现真正的流式输出
+				if _, err := c.Writer.Write(orderedAudio.audio); err != nil {
+					logger.WithError(err).Error("写入响应流失败")
+					return
+				}
+				flusher.Flush()
+				
+				// 记录结果
+				totalAudioSize += len(orderedAudio.audio)
+				results = append(results, sentenceSynthesisResult{
+					index:     orderedAudio.index,
+					length:    orderedAudio.length,
+					audioSize: len(orderedAudio.audio),
+					content:   orderedAudio.content,
+					duration:  orderedAudio.duration,
+				})
+				
+				delete(audioMap, nextIndex)
+				nextIndex++
+			} else {
+				break
+			}
+		}
 	}
 
 	// 检查是否有错误发生
 	select {
 	case err := <-errChan:
 		logger.WithError(err).Error("分段TTS处理失败")
-		// 此时无法向客户端发送JSON错误，因为响应头已发送
 		return
 	default:
 	}
-
-	// 按序号排序结果
-	// (由于并发，结果顺序不确定，如果需要可以排序)
-	// sort.Slice(results, func(i, j int) bool { return results[i].index < results[j].index })
 
 	// 打印表格格式的合成结果
 	logger.Info("句子合成结果表:")
