@@ -3,11 +3,12 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/sirupsen/logrus"
 	"tts/internal/config"
 	"tts/internal/http/routes"
 )
@@ -19,13 +20,7 @@ type App struct {
 }
 
 // NewApp 创建一个新的应用程序实例
-func NewApp(configPath string) (*App, error) {
-	// 加载配置
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("加载配置失败: %w", err)
-	}
-
+func NewApp(cfg *config.Config) (*App, error) {
 	// 初始化服务
 	ttsService, err := routes.InitializeServices(cfg)
 	if err != nil {
@@ -58,7 +53,7 @@ func (a *App) Start() error {
 
 	// 在一个goroutine中启动服务器
 	go func() {
-		log.Printf("启动TTS服务，监听端口 %d...\n", a.cfg.Server.Port)
+		logrus.Infof("启动TTS服务，监听端口 %d...", a.cfg.Server.Port)
 		errChan <- a.server.Start()
 	}()
 
@@ -76,7 +71,7 @@ func (a *App) Start() error {
 			return fmt.Errorf("服务器关闭出错: %w", err)
 		}
 
-		log.Println("服务器已优雅关闭")
+		logrus.Info("服务器已优雅关闭")
 		return nil
 	}
 }

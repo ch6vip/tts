@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"tts/internal/config"
 	"tts/internal/models"
 	"tts/internal/utils"
@@ -57,7 +57,7 @@ func NewClient(cfg *config.Config) *Client {
 	// 从Viper配置中创建SSML处理器
 	ssmProcessor, err := config.NewSSMLProcessor(&cfg.SSML)
 	if err != nil {
-		log.Fatalf("创建SSML处理器失败: %v", err)
+		logrus.Fatalf("创建SSML处理器失败: %v", err)
 	}
 	client := &Client{
 		defaultVoice:  cfg.TTS.DefaultVoice,
@@ -89,10 +89,10 @@ func (c *Client) getEndpoint(ctx context.Context) (map[string]interface{}, error
 	// 获取新的端点信息
 	endpoint, err := utils.GetEndpoint()
 	if err != nil {
-		log.Printf("获取认证信息失败: %v\n", err)
+		logrus.Errorf("获取认证信息失败: %v", err)
 		return nil, err
 	}
-	log.Printf("获取认证信息成功: %v\n", endpoint)
+	logrus.Infof("获取认证信息成功: %v", endpoint)
 
 	// 从 jwt 中解析出到期时间 exp
 	jwt := endpoint["t"].(string)
@@ -101,7 +101,7 @@ func (c *Client) getEndpoint(ctx context.Context) (map[string]interface{}, error
 		return nil, errors.New("jwt 中缺少 exp 字段")
 	}
 	expTime := time.Unix(exp, 0)
-	log.Println("jwt  距到期时间:", time.Until(expTime))
+	logrus.Infof("jwt  距到期时间: %v", time.Until(expTime))
 
 	// 更新缓存
 	c.endpointMu.Lock()
@@ -298,7 +298,10 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 		// 获取响应体以便调试
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		log.Printf("TTS API错误: %s, 状态码: %d", string(body), resp.StatusCode)
+		logrus.WithFields(logrus.Fields{
+			"status_code": resp.StatusCode,
+			"body":        string(body),
+		}).Error("TTS API错误")
 		return nil, fmt.Errorf("TTS API错误: %s, 状态码: %d", string(body), resp.StatusCode)
 	}
 

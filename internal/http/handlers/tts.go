@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,9 +18,19 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 )
 
 var cfg = config.Get()
+
+// getLoggerWithTraceID 从 Gin 上下文中获取带有 trace_id 的日志记录器
+func getLoggerWithTraceID(c *gin.Context) *logrus.Entry {
+	traceID, exists := c.Get("trace_id")
+	if !exists {
+		traceID = "unknown"
+	}
+	return logrus.WithField("trace_id", traceID)
+}
 
 // truncateForLog 截断文本用于日志显示，同时显示开头和结尾
 func truncateForLog(text string, maxLength int) string {
@@ -79,7 +88,7 @@ func audioMerge(audioSegments [][]byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("使用ffmpeg合并完成，总大小: %s", formatFileSize(len(mergedData)))
+	logrus.WithField("size", formatFileSize(len(mergedData))).Info("使用ffmpeg合并完成")
 	return mergedData, nil
 }
 
@@ -114,8 +123,9 @@ func NewTTSHandler(service tts.Service, cfg *config.Config) *TTSHandler {
 // processTTSRequest 处理TTS请求的核心逻辑
 func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, startTime time.Time, parseTime time.Duration, requestType string) {
 	// 验证必要参数
+	logger := getLoggerWithTraceID(c)
 	if req.Text == "" {
-		log.Print("错误: 未提供文本参数")
+		logger.Error("错误: 未提供文本参数")
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "必须提供文本参数"})
 		return
 	}
@@ -133,7 +143,10 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 	// 检查是否需要分段处理
 	segmentThreshold := h.config.TTS.SegmentThreshold
 	if reqTextLength > segmentThreshold && reqTextLength <= h.config.TTS.MaxTextLength {
-		log.Printf("文本长度 %d 超过阈值 %d，使用分段处理", reqTextLength, segmentThreshold)
+		logger.WithFields(logrus.Fields{
+			"text_length": reqTextLength,
+			"threshold":   segmentThreshold,
+		}).Info("文本长度超过阈值，使用分段处理")
 		h.handleSegmentedTTS(c, req)
 		return
 	}
@@ -141,10 +154,13 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 	synthStart := time.Now()
 	resp, err := h.ttsService.SynthesizeSpeech(c.Request.Context(), req)
 	synthTime := time.Since(synthStart)
-	log.Printf("TTS合成耗时: %v, 文本长度: %d", synthTime, reqTextLength)
+	logger.WithFields(logrus.Fields{
+		"duration":    synthTime,
+		"text_length": reqTextLength,
+	}).Info("TTS合成耗时")
 
 	if err != nil {
-		log.Printf("TTS合成失败: %v", err)
+		logger.WithError(err).Error("TTS合成失败")
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "语音合成失败: " + err.Error()})
 		return
 	}
@@ -153,15 +169,21 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 	c.Header("Content-Type", "audio/mpeg")
 	writeStart := time.Now()
 	if _, err := c.Writer.Write(resp.AudioContent); err != nil {
-		log.Printf("写入响应失败: %v", err)
+		logger.WithError(err).Error("写入响应失败")
 		return
 	}
 	writeTime := time.Since(writeStart)
 
 	// 记录总耗时
 	totalTime := time.Since(startTime)
-	log.Printf("%s请求总耗时: %v (解析: %v, 合成: %v, 写入: %v), 音频大小: %s",
-		requestType, totalTime, parseTime, synthTime, writeTime, formatFileSize(len(resp.AudioContent)))
+	logger.WithFields(logrus.Fields{
+		"request_type": requestType,
+		"total_time":   totalTime,
+		"parse_time":   parseTime,
+		"synth_time":   synthTime,
+		"write_time":   writeTime,
+		"audio_size":   formatFileSize(len(resp.AudioContent)),
+	}).Info("TTS请求总耗时")
 }
 
 // fillDefaultValues 填充默认值
@@ -217,14 +239,14 @@ func (h *TTSHandler) HandleTTSPost(c *gin.Context) {
 	if c.ContentType() == "application/json" {
 		err = c.ShouldBindJSON(&req)
 		if err != nil {
-			log.Printf("JSON解析错误: %v", err)
+			getLoggerWithTraceID(c).WithError(err).Error("JSON解析错误")
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "无效的JSON请求"})
 			return
 		}
 	} else {
 		err = c.ShouldBind(&req)
 		if err != nil {
-			log.Printf("表单解析错误: %v", err)
+			getLoggerWithTraceID(c).WithError(err).Error("表单解析错误")
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "无法解析表单数据"})
 			return
 		}
@@ -262,8 +284,14 @@ func (h *TTSHandler) HandleOpenAITTS(c *gin.Context) {
 	// 创建内部TTS请求
 	req := h.convertOpenAIRequest(openaiReq)
 
-	log.Printf("OpenAI TTS请求: model=%s, voice=%s → %s, speed=%.2f → %s, 文本长度=%d",
-		openaiReq.Model, openaiReq.Voice, req.Voice, openaiReq.Speed, req.Rate, utf8.RuneCountInString(req.Text))
+	getLoggerWithTraceID(c).WithFields(logrus.Fields{
+		"model":       openaiReq.Model,
+		"from_voice":  openaiReq.Voice,
+		"to_voice":    req.Voice,
+		"from_speed":  openaiReq.Speed,
+		"to_rate":     req.Rate,
+		"text_length": utf8.RuneCountInString(req.Text),
+	}).Info("OpenAI TTS请求")
 
 	h.processTTSRequest(c, req, startTime, parseTime, "OpenAI TTS")
 }
@@ -309,6 +337,7 @@ type sentenceSynthesisResult struct {
 func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 	segmentStart := time.Now()
 	text := req.Text
+	logger := getLoggerWithTraceID(c)
 
 	// 开始计时：分割文本
 	splitStart := time.Now()
@@ -316,8 +345,12 @@ func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 	segmentCount := len(sentences)
 	splitTime := time.Since(splitStart)
 
-	log.Printf("分割文本耗时: %v, 文本总长度: %d, 分段数: %d, 平均句子长度: %.2f",
-		splitTime, utf8.RuneCountInString(text), segmentCount, float64(utf8.RuneCountInString(text))/float64(segmentCount))
+	logger.WithFields(logrus.Fields{
+		"duration":       splitTime,
+		"total_length":   utf8.RuneCountInString(text),
+		"segment_count":  segmentCount,
+		"avg_sent_len": float64(utf8.RuneCountInString(text)) / float64(segmentCount),
+	}).Info("分割文本耗时")
 
 	// 创建用于存储每段音频的切片
 	results := make([][]byte, segmentCount)
@@ -411,31 +444,33 @@ func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 	}
 
 	// 打印表格格式的合成结果
-	log.Println("句子合成结果表:")
-	log.Println("-------------------------------------------------------------")
-	log.Println("序号 | 长度  |    音频大小   |    耗时    | 内容")
-	log.Println("-------------------------------------------------------------")
+	logger.Info("句子合成结果表:")
+	logger.Info("-------------------------------------------------------------")
+	logger.Info("序号 | 长度  |    音频大小   |    耗时    | 内容")
+	logger.Info("-------------------------------------------------------------")
 	for i := 0; i < segmentCount; i++ {
 		result := synthResults[i]
-		log.Printf("#%-3d | %4d | %12s | %10v | %s",
+		logger.Infof("#%-3d | %4d | %12s | %10v | %s",
 			i+1,
 			result.length,
 			formatFileSize(result.audioSize),
 			result.duration.Round(time.Millisecond),
 			result.content)
 	}
-	log.Println("-------------------------------------------------------------")
+	logger.Info("-------------------------------------------------------------")
 
 	// 记录合成总耗时
 	synthesisTime := time.Since(synthesisStart)
-	log.Printf("所有分段合成总耗时: %v, 平均每段耗时: %v",
-		synthesisTime, synthesisTime/time.Duration(segmentCount))
+	logger.WithFields(logrus.Fields{
+		"total_duration": synthesisTime,
+		"avg_duration":   synthesisTime / time.Duration(segmentCount),
+	}).Info("所有分段合成总耗时")
 
 	// 合并音频
 	writeStart := time.Now()
 	audioData, err := audioMerge(results)
 	if err != nil {
-		log.Printf("合并音频失败: %v", err)
+		logger.WithError(err).Error("合并音频失败")
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "音频合并失败: " + err.Error()})
 		return
 	}
@@ -443,15 +478,20 @@ func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 	// 设置响应内容类型并写入数据
 	c.Header("Content-Type", "audio/mpeg")
 	if _, err := c.Writer.Write(audioData); err != nil {
-		log.Printf("写入响应失败: %v", err)
+		logger.WithError(err).Error("写入响应失败")
 		return
 	}
 
 	// 记录写入耗时和总耗时
 	writeTime := time.Since(writeStart)
 	totalTime := time.Since(segmentStart)
-	log.Printf("分段TTS请求总耗时: %v (分割: %v, 合成: %v, 写入: %v), 总音频大小: %s",
-		totalTime, splitTime, synthesisTime, writeTime, formatFileSize(len(audioData)))
+	logger.WithFields(logrus.Fields{
+		"total_time":   totalTime,
+		"split_time":   splitTime,
+		"synth_time":   synthesisTime,
+		"write_time":   writeTime,
+		"audio_size":   formatFileSize(len(audioData)),
+	}).Info("分段TTS请求总耗时")
 }
 
 // HandleReader 返回 reader 可导入的格式
@@ -503,7 +543,7 @@ func (h *TTSHandler) HandleReader(context *gin.Context) {
 		Name: displayName,
 		Url:  url,
 	}); err != nil {
-		log.Printf("写入响应失败: %v", err)
+		getLoggerWithTraceID(context).WithError(err).Error("写入响应失败")
 		context.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "写入响应失败"})
 	}
 }
@@ -603,6 +643,9 @@ func splitTextBySentences(text string) []string {
 	sentences := utils.SplitAndFilterEmptyLines(text)
 	// 第二次处理：合并过短的句子
 	shortSentences := utils.MergeStringsWithLimit(sentences, minLen, maxLen)
-	log.Printf("分割后的句子数: %d → %d", len(sentences), len(shortSentences))
+	logrus.WithFields(logrus.Fields{
+		"before": len(sentences),
+		"after":  len(shortSentences),
+	}).Info("分割后的句子数")
 	return shortSentences
 }

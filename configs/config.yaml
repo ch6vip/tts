@@ -55,3 +55,6 @@ ssml:
       pattern: <sub\s+[^>]*>|</sub>
     - name: mstts
       pattern: <mstts:[^>]*>|</mstts:[^>]*>
+log:
+  level: "info"
+  format: "text" # "json" or "text"

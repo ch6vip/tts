@@ -16,6 +16,13 @@ type Config struct {
 	TTS    TTSConfig    `mapstructure:"tts"`
 	OpenAI OpenAIConfig `mapstructure:"openai"`
 	SSML   SSMLConfig   `mapstructure:"ssml"`
+	Log    LogConfig    `mapstructure:"log"`
+}
+
+// LogConfig 包含日志配置
+type LogConfig struct {
+	Level  string `mapstructure:"level"`
+	Format string `mapstructure:"format"`
 }
 
 // OpenAIConfig 包含OpenAI API配置
