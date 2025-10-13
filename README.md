@@ -9,7 +9,7 @@
 - **高度可调**：支持调节语速、语调和说话风格。
 - **OpenAI API 兼容**：兼容 OpenAI 的 TTS API，可无缝集成到现有应用中。
 - **长文本支持**：自动对长文本进行分段处理，确保合成的稳定性和流畅性。
-- **灵活部署**：支持 Docker 和 Cloudflare Workers 两种部署方式。
+- **灵活部署**：支持 Docker 部署方式。
 - **Web 用户界面**：提供一个简单直观的 Web 界面，方便快速测试和使用。
 - **详细的 API 文档**：提供在线 API 文档，方便开发者集成。
 - **SSML 支持**：支持语音合成标记语言 (SSML)，实现更精细的语音控制。
@@ -21,20 +21,12 @@
 我们提供已构建好的多平台 Docker 镜像 (`linux/amd64`, `linux/arm64`)。
 
 ```shell
-docker run -d -p 8080:8080 --name=tts zuoban/zb-tts
+docker run -d -p 8080:8080 --name=tts ch6vip/ch6vip-tts
 ```
 
 部署完成后，您可以：
 - 访问 `http://localhost:8080` 使用 Web 界面。
 - 访问 `http://localhost:8080/api-doc` 查看 API 文档。
-
-### Cloudflare Worker 部署
-
-1.  **创建 Worker**：登录 Cloudflare 控制台，创建一个新的 Worker。
-2.  **复制代码**：将 [`workers/src/index.js`](./workers/src/index.js) 的代码复制到您的 Worker 中。
-3.  **添加环境变量**：
-    - 在 Worker 的设置页面，找到 "Variables and Secrets"。
-    - 添加一个名为 `API_KEY` 的 Secret 变量，值为您的 API 密钥。
 
 ## 🛠️ API 使用
 
@@ -187,7 +179,6 @@ go build -o tts ./cmd/api
 ├── web/                # Web 前端资源
 │   ├── static/         # CSS, JS, 图标等
 │   └── templates/      # HTML 模板
-└── workers/            # Cloudflare Worker 脚本
 ```
 
 ## 📄 许可证
