@@ -59,6 +59,8 @@ jobs:
     name: Build Application
     runs-on: ubuntu-latest
     needs: test
+    permissions:
+      actions: read
     strategy:
       matrix:
         arch: [amd64, arm64]
