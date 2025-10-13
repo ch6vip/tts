@@ -1,9 +1,10 @@
 package config
 
 import (
+	"bytes"
+	"encoding/xml"
 	"fmt"
-	"html"
-	"regexp"
+	"io"
 	"strings"
 	"sync"
 
@@ -108,68 +109,85 @@ func Get() *Config {
 	return &config
 }
 
-// TagPattern 定义标签模式及其名称
-type TagPattern struct {
-	Name    string `mapstructure:"name"`    // 标签名称，用于日志和调试
-	Pattern string `mapstructure:"pattern"` // 标签的正则表达式模式
-}
-
 // SSMLConfig 存储SSML标签配置
 type SSMLConfig struct {
-	// PreserveTags 包含所有需要保留的标签的正则表达式模式
-	PreserveTags []TagPattern `mapstructure:"preserve_tags"`
+	// 此结构体现在为空，因为新的处理器会处理所有标签。
+	// 保留它是为了与配置结构兼容。
 }
 
 // SSMLProcessor 处理SSML内容
 type SSMLProcessor struct {
-	config       *SSMLConfig
-	patternCache map[string]*regexp.Regexp
+	config *SSMLConfig
 }
 
 // NewSSMLProcessor 从配置对象创建SSMLProcessor
 func NewSSMLProcessor(config *SSMLConfig) (*SSMLProcessor, error) {
 	processor := &SSMLProcessor{
-		config:       config,
-		patternCache: make(map[string]*regexp.Regexp),
+		config: config,
 	}
-
-	// 预编译正则表达式
-	for _, tagPattern := range config.PreserveTags {
-		regex, err := regexp.Compile(tagPattern.Pattern)
-		if err != nil {
-			return nil, fmt.Errorf("编译正则表达式'%s'失败: %w", tagPattern.Name, err)
-		}
-		processor.patternCache[tagPattern.Name] = regex
-	}
-
 	return processor, nil
 }
 
-// EscapeSSML 转义SSML内容，但保留配置的标签
+// EscapeSSML 使用XML解析器安全地转义SSML内容中的文本节点
 func (p *SSMLProcessor) EscapeSSML(ssml string) string {
-	// 使用占位符替换标签
-	placeholders := make(map[string]string)
-	processedSSML := ssml
+	if ssml == "" {
+		return ""
+	}
+	// 为了处理可能没有根元素的SSML片段，我们将其包装在一个临时的根元素中
+	wrappedSSML := "<speak>" + ssml + "</speak>"
+	decoder := xml.NewDecoder(strings.NewReader(wrappedSSML))
+	decoder.Strict = false // 容忍非标准的XML
 
-	counter := 0
+	var builder strings.Builder
 
-	// 处理所有配置的标签
-	for name, pattern := range p.patternCache {
-		processedSSML = pattern.ReplaceAllStringFunc(processedSSML, func(match string) string {
-			placeholder := fmt.Sprintf("__SSML_PLACEHOLDER_%s_%d__", name, counter)
-			placeholders[placeholder] = match
-			counter++
-			return placeholder
-		})
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			// 如果解析出错，返回原始字符串作为后备
+			return ssml
+		}
+
+		switch t := token.(type) {
+		case xml.StartElement:
+			builder.WriteString("<" + t.Name.Local)
+			for _, attr := range t.Attr {
+				builder.WriteString(fmt.Sprintf(` %s="%s"`, attr.Name.Local, attr.Value))
+			}
+			builder.WriteString(">")
+		case xml.EndElement:
+			builder.WriteString("</" + t.Name.Local + ">")
+		case xml.CharData:
+			// 这是关键：只对文本节点进行转义
+			var escapedText bytes.Buffer
+			if err := xml.EscapeText(&escapedText, t); err != nil {
+				builder.Write(t) // 出错时回退到原始文本
+			} else {
+				builder.Write(escapedText.Bytes())
+			}
+		case xml.Comment:
+			builder.WriteString("<!--")
+			builder.Write(t)
+			builder.WriteString("-->")
+		case xml.ProcInst:
+			builder.WriteString("<?")
+			builder.WriteString(t.Target)
+			builder.WriteString(" ")
+			builder.Write(t.Inst)
+			builder.WriteString("?>")
+		case xml.Directive:
+			builder.WriteString("<!")
+			builder.Write(t)
+			builder.WriteString(">")
+		}
 	}
 
-	// 对处理后的文本进行HTML转义
-	escapedContent := html.EscapeString(processedSSML)
+	// 移除我们添加的临时包装
+	result := builder.String()
+	result = strings.TrimPrefix(result, "<speak>")
+	result = strings.TrimSuffix(result, "</speak>")
 
-	// 恢复所有标签占位符
-	for placeholder, tag := range placeholders {
-		escapedContent = strings.Replace(escapedContent, placeholder, tag, 1)
-	}
-
-	return escapedContent
+	return result
 }
