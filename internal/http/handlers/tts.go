@@ -21,7 +21,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var cfg = config.Get()
 // UpstreamErrorType 上游错误类型
 type UpstreamErrorType int
 
@@ -387,7 +386,7 @@ func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 
 	// 1. 分割文本
 	splitStart := time.Now()
-	sentences := splitTextBySentences(text)
+	sentences := h.splitTextBySentences(text)
 	segmentCount := len(sentences)
 	splitTime := time.Since(splitStart)
 
@@ -554,7 +553,7 @@ func (h *TTSHandler) HandleReader(context *gin.Context) {
 	displayName := context.Query("n")
 
 	baseUrl := utils.GetBaseURL(context)
-	basePath, err := utils.JoinURL(baseUrl, cfg.Server.BasePath)
+	basePath, err := utils.JoinURL(baseUrl, h.config.Server.BasePath)
 	if err != nil {
 		_ = context.Error(fmt.Errorf("%w: %v", custom_errors.ErrUpstreamServiceFailed, err))
 		return
@@ -576,8 +575,8 @@ func (h *TTSHandler) HandleReader(context *gin.Context) {
 		urlParams = append(urlParams, fmt.Sprintf("s=%s", req.Style))
 	}
 
-	if cfg.TTS.ApiKey != "" {
-		urlParams = append(urlParams, fmt.Sprintf("api_key=%s", cfg.TTS.ApiKey))
+	if h.config.TTS.ApiKey != "" {
+		urlParams = append(urlParams, fmt.Sprintf("api_key=%s", h.config.TTS.ApiKey))
 	}
 
 	url := fmt.Sprintf("%s/tts?%s", basePath, strings.Join(urlParams, "&"))
@@ -608,7 +607,7 @@ func (h *TTSHandler) HandleIFreeTime(context *gin.Context) {
 
 	// 获取基础URL
 	baseUrl := utils.GetBaseURL(context)
-	basePath, err := utils.JoinURL(baseUrl, cfg.Server.BasePath)
+	basePath, err := utils.JoinURL(baseUrl, h.config.Server.BasePath)
 	if err != nil {
 		_ = context.Error(fmt.Errorf("%w: %v", custom_errors.ErrUpstreamServiceFailed, err))
 		return
@@ -677,14 +676,14 @@ func (h *TTSHandler) HandleIFreeTime(context *gin.Context) {
 }
 
 // splitTextBySentences 将文本按句子分割
-func splitTextBySentences(text string) []string {
+func (h *TTSHandler) splitTextBySentences(text string) []string {
 	// 如果文本过短，直接作为一个句子返回
 	if utf8.RuneCountInString(text) < 100 {
 		return []string{text}
 	}
 
-	maxLen := cfg.TTS.MaxSentenceLength
-	minLen := cfg.TTS.MinSentenceLength
+	maxLen := h.config.TTS.MaxSentenceLength
+	minLen := h.config.TTS.MinSentenceLength
 
 	// 第一次分割：按标点和长度限制分割
 	sentences := utils.SplitAndFilterEmptyLines(text)
