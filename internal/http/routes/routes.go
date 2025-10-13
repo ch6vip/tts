@@ -1,9 +1,11 @@
 package routes
 
 import (
+	"time"
 	"tts/internal/config"
 	"tts/internal/http/handlers"
 	"tts/internal/http/middleware"
+	"tts/internal/jobs"
 	"tts/internal/tts"
 	"tts/internal/tts/microsoft"
 
@@ -16,7 +18,8 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 	router := gin.New()
 
 	// 创建处理器
-	ttsHandler := handlers.NewTTSHandler(ttsService, cfg)
+	jobStore := jobs.NewJobStore(10*time.Minute, 1*time.Minute)
+	ttsHandler := handlers.NewTTSHandler(ttsService, cfg, jobStore)
 	voicesHandler := handlers.NewVoicesHandler(ttsService)
 
 	// 创建页面处理器
@@ -53,6 +56,10 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 	baseRouter.GET("/tts", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleTTS)
 	baseRouter.GET("/reader.json", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleReader)
 	baseRouter.GET("ifreetime.json", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleIFreeTime)
+
+	// 异步任务路由
+	baseRouter.GET("/tts/status/:job_id", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleJobStatus)
+	baseRouter.GET("/tts/result/:job_id", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleJobResult)
 
 	// 设置语音列表API路由
 	baseRouter.GET("/voices", voicesHandler.HandleVoices)

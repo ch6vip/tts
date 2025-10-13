@@ -1,5 +1,6 @@
 package models
 
+import "time"
 // TTSRequest 表示一个语音合成请求
 type TTSRequest struct {
 	Text  string `json:"text,omitempty"`  // 要转换的文本
@@ -71,4 +72,23 @@ type IFreeTimeTtsHandle struct {
 	Url              string                 `json:"url"`
 	Params           map[string]string      `json:"params"`
 	HttpConfigs      IFreeTimeHttpConfig    `json:"httpConfigs"`
+}
+// JobStatus represents the status of a TTS job.
+type JobStatus string
+
+const (
+	JobStatusProcessing JobStatus = "processing"
+	JobStatusComplete   JobStatus = "complete"
+	JobStatusError      JobStatus = "error"
+)
+
+// Job represents an asynchronous TTS synthesis job.
+type Job struct {
+	ID          string      `json:"job_id"`
+	Status      JobStatus   `json:"status"`
+	Progress    string      `json:"progress,omitempty"` // e.g., "5/19"
+	Error       string      `json:"error,omitempty"`
+	AudioData   []byte      `json:"-"` // Not exposed in JSON
+	CreatedAt   time.Time   `json:"created_at"`
+	CompletedAt *time.Time  `json:"completed_at,omitempty"`
 }

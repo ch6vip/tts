@@ -11,7 +11,7 @@ tts:
   default_pitch: "0"
   default_format: "audio-24khz-48kbitrate-mono-mp3"
   max_text_length: 65535
-  request_timeout: 30
+  request_timeout: 60
   max_concurrent: 20
   segment_threshold: 300
   min_sentence_length: 200

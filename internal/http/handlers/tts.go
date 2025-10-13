@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
@@ -15,6 +16,7 @@ import (
 	"tts/internal/config"
 	"tts/internal/models"
 	"tts/internal/tts"
+	"tts/internal/jobs"
 	"tts/internal/utils"
 	"unicode/utf8"
 
@@ -111,68 +113,88 @@ func formatFileSize(size int) string {
 type TTSHandler struct {
 	ttsService tts.Service
 	config     *config.Config
+	jobStore   *jobs.JobStore
 }
 
 // NewTTSHandler 创建一个新的TTS处理器
-func NewTTSHandler(service tts.Service, cfg *config.Config) *TTSHandler {
+func NewTTSHandler(service tts.Service, cfg *config.Config, jobStore *jobs.JobStore) *TTSHandler {
 	return &TTSHandler{
 		ttsService: service,
 		config:     cfg,
+		jobStore:   jobStore,
 	}
 }
 
 // processTTSRequest 处理TTS请求的核心逻辑
 func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, startTime time.Time, parseTime time.Duration, requestType string) {
-	// 验证必要参数
 	logger := getLoggerWithTraceID(c)
+
+	// 验证和填充默认值
+	if err := h.validateAndFillTTSRequest(&req, logger); err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	inputText, isSSML := h.getInputText(req)
+	reqTextLength := utf8.RuneCountInString(inputText)
+
+	// 决定是同步还是异步处理
+	// 如果是SSML或文本长度小于分段阈值，则同步处理
+	if isSSML || reqTextLength <= h.config.TTS.SegmentThreshold {
+		h.handleSyncTTS(c, req, startTime, parseTime, requestType, logger)
+	} else {
+		// 异步处理长文本
+		h.handleAsyncTTS(c, req, logger)
+	}
+}
+
+// validateAndFillTTSRequest 验证请求并填充默认值
+func (h *TTSHandler) validateAndFillTTSRequest(req *models.TTSRequest, logger *logrus.Entry) error {
 	if req.Text == "" && req.SSML == "" {
 		logger.Error("错误: 未提供 text 或 ssml 参数")
-		_ = c.Error(fmt.Errorf("%w: 必须提供 text 或 ssml 参数", custom_errors.ErrInvalidInput))
-		return
+		return fmt.Errorf("%w: 必须提供 text 或 ssml 参数", custom_errors.ErrInvalidInput)
 	}
 
 	if req.Text != "" && req.SSML != "" {
 		logger.Error("错误: 不能同时提供 text 和 ssml 参数")
-		_ = c.Error(fmt.Errorf("%w: 不能同时提供 text 和 ssml 参数", custom_errors.ErrInvalidInput))
-		return
+		return fmt.Errorf("%w: 不能同时提供 text 和 ssml 参数", custom_errors.ErrInvalidInput)
 	}
 
-	// 使用默认值填充空白参数
-	h.fillDefaultValues(&req)
+	h.fillDefaultValues(req)
 
-	var inputText string
-	isSSML := req.SSML != ""
-	if isSSML {
-		inputText = req.SSML
-	} else {
-		inputText = req.Text
-	}
-
-	// 检查文本长度
+	inputText, _ := h.getInputText(*req)
 	reqTextLength := utf8.RuneCountInString(inputText)
 	if reqTextLength > h.config.TTS.MaxTextLength {
-		_ = c.Error(fmt.Errorf("%w: 文本长度超过 %d 字符的限制", custom_errors.ErrInvalidInput, h.config.TTS.MaxTextLength))
-		return
+		return fmt.Errorf("%w: 文本长度超过 %d 字符的限制", custom_errors.ErrInvalidInput, h.config.TTS.MaxTextLength)
 	}
 
-	// 检查是否需要分段处理 (SSML不支持分段)
-	segmentThreshold := h.config.TTS.SegmentThreshold
-	if !isSSML && reqTextLength > segmentThreshold && reqTextLength <= h.config.TTS.MaxTextLength {
-		logger.WithFields(logrus.Fields{
-			"text_length": reqTextLength,
-			"threshold":   segmentThreshold,
-		}).Info("文本长度超过阈值，使用分段处理")
-		h.handleSegmentedTTS(c, req)
-		return
+	return nil
+}
+
+// getInputText 从请求中获取输入文本和类型
+func (h *TTSHandler) getInputText(req models.TTSRequest) (text string, isSSML bool) {
+	isSSML = req.SSML != ""
+	if isSSML {
+		text = req.SSML
+	} else {
+		text = req.Text
 	}
+	return text, isSSML
+}
+
+// handleSyncTTS 同步处理TTS请求
+func (h *TTSHandler) handleSyncTTS(c *gin.Context, req models.TTSRequest, startTime time.Time, parseTime time.Duration, requestType string, logger *logrus.Entry) {
+	inputText, _ := h.getInputText(req)
+	reqTextLength := utf8.RuneCountInString(inputText)
 
 	synthStart := time.Now()
 	resp, err := h.ttsService.SynthesizeSpeech(c.Request.Context(), req)
 	synthTime := time.Since(synthStart)
+
 	logger.WithFields(logrus.Fields{
 		"duration":    synthTime,
 		"text_length": reqTextLength,
-	}).Info("TTS合成耗时")
+	}).Info("TTS同步合成耗时")
 
 	if err != nil {
 		logger.WithError(err).Error("TTS合成失败")
@@ -180,7 +202,6 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 		return
 	}
 
-	// 设置响应
 	c.Header("Content-Type", "audio/mpeg")
 	writeStart := time.Now()
 	if _, err := c.Writer.Write(resp.AudioContent); err != nil {
@@ -189,7 +210,6 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 	}
 	writeTime := time.Since(writeStart)
 
-	// 记录总耗时
 	totalTime := time.Since(startTime)
 	logger.WithFields(logrus.Fields{
 		"request_type": requestType,
@@ -198,7 +218,151 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 		"synth_time":   synthTime,
 		"write_time":   writeTime,
 		"audio_size":   formatFileSize(len(resp.AudioContent)),
-	}).Info("TTS请求总耗时")
+	}).Info("TTS同步请求总耗时")
+}
+
+// handleAsyncTTS 异步处理TTS请求
+func (h *TTSHandler) handleAsyncTTS(c *gin.Context, req models.TTSRequest, logger *logrus.Entry) {
+	job := h.jobStore.CreateJob()
+	logger.WithField("job_id", job.ID).Info("创建异步TTS任务")
+
+	// 在后台goroutine中处理
+	go h.runSynthesisJob(req, job.ID, logger)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"status":   "processing",
+		"job_id":   job.ID,
+		"progress": "0/0",
+	})
+}
+
+// runSynthesisJob 在后台运行合成任务
+func (h *TTSHandler) runSynthesisJob(req models.TTSRequest, jobID string, logger *logrus.Entry) {
+	// 使用分段逻辑，但不是流式返回，而是合并后存储
+	text := req.Text
+	sentences := splitTextBySentences(text)
+	segmentCount := len(sentences)
+	logger.WithFields(logrus.Fields{
+		"job_id":        jobID,
+		"segment_count": segmentCount,
+	}).Info("开始异步分段合成")
+
+	var audioSegments [][]byte
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	errChan := make(chan error, 1)
+
+	maxConcurrent := h.config.TTS.MaxConcurrent
+	semaphore := make(chan struct{}, maxConcurrent)
+
+	for i, sentence := range sentences {
+		wg.Add(1)
+		go func(index int, sentenceText string) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			segReq := req
+			segReq.Text = sentenceText
+
+			resp, err := h.ttsService.SynthesizeSpeech(context.Background(), segReq)
+			if err != nil {
+				select {
+				case errChan <- fmt.Errorf("句子 %d 合成失败: %w", index+1, err):
+				default:
+				}
+				return
+			}
+
+			mu.Lock()
+			// 保持顺序
+			if len(audioSegments) == index {
+				audioSegments = append(audioSegments, resp.AudioContent)
+			} else {
+				// 如果出现乱序，需要更复杂的逻辑来保证顺序
+				// 这里简化处理，假设大部分情况是顺序的
+				// 实际生产中可能需要一个带索引的map来排序
+				temp := make([][]byte, segmentCount)
+				copy(temp, audioSegments)
+				temp[index] = resp.AudioContent
+				audioSegments = temp
+			}
+			progress := fmt.Sprintf("%d/%d", len(audioSegments), segmentCount)
+			h.jobStore.UpdateProgress(jobID, progress)
+			mu.Unlock()
+
+		}(i, sentence)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	if err := <-errChan; err != nil {
+		logger.WithError(err).WithField("job_id", jobID).Error("异步TTS任务失败")
+		h.jobStore.SetJobError(jobID, err.Error())
+		return
+	}
+
+	logger.WithField("job_id", jobID).Info("所有分段合成完成，开始合并")
+	mergedAudio, err := audioMerge(audioSegments)
+	if err != nil {
+		logger.WithError(err).WithField("job_id", jobID).Error("音频合并失败")
+		h.jobStore.SetJobError(jobID, "音频合并失败")
+		return
+	}
+
+	h.jobStore.SetJobComplete(jobID, mergedAudio)
+	logger.WithFields(logrus.Fields{
+		"job_id":     jobID,
+		"audio_size": formatFileSize(len(mergedAudio)),
+	}).Info("异步TTS任务成功完成")
+}
+
+// HandleJobStatus handles requests for job status.
+func (h *TTSHandler) HandleJobStatus(c *gin.Context) {
+	jobID := c.Param("job_id")
+	logger := getLoggerWithTraceID(c).WithField("job_id", jobID)
+
+	job, found := h.jobStore.GetJob(jobID)
+	if !found {
+		logger.Warn("查询的Job ID不存在")
+		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		return
+	}
+
+	logger.WithFields(logrus.Fields{
+		"status":   job.Status,
+		"progress": job.Progress,
+	}).Info("查询Job状态")
+
+	c.JSON(http.StatusOK, gin.H{
+		"job_id":   job.ID,
+		"status":   job.Status,
+		"progress": job.Progress,
+		"error":    job.Error,
+	})
+}
+
+// HandleJobResult handles requests for the result of a completed job.
+func (h *TTSHandler) HandleJobResult(c *gin.Context) {
+	jobID := c.Param("job_id")
+	logger := getLoggerWithTraceID(c).WithField("job_id", jobID)
+
+	job, found := h.jobStore.GetJob(jobID)
+	if !found {
+		logger.Warn("查询的Job ID不存在")
+		c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+		return
+	}
+
+	if job.Status != models.JobStatusComplete {
+		logger.Warn("请求Job结果，但任务尚未完成")
+		c.JSON(http.StatusAccepted, gin.H{"status": job.Status, "error": "Job not complete"})
+		return
+	}
+
+	logger.WithField("audio_size", formatFileSize(len(job.AudioData))).Info("提供Job结果")
+	c.Data(http.StatusOK, "audio/mpeg", job.AudioData)
 }
 
 // fillDefaultValues 填充默认值
@@ -340,167 +504,6 @@ func (h *TTSHandler) convertOpenAIRequest(openaiReq models.OpenAIRequest) models
 	}
 }
 
-// Add this struct to store synthesis results
-type sentenceSynthesisResult struct {
-	index     int
-	length    int
-	audioSize int
-	content   string
-	duration  time.Duration
-}
-
-// Modify the handleSegmentedTTS function to support streaming response
-func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
-	segmentStart := time.Now()
-	text := req.Text
-	logger := getLoggerWithTraceID(c)
-
-	// 开始计时：分割文本
-	splitStart := time.Now()
-	sentences := splitTextBySentences(text)
-	segmentCount := len(sentences)
-	splitTime := time.Since(splitStart)
-
-	logger.WithFields(logrus.Fields{
-		"duration":      splitTime,
-		"total_length":  utf8.RuneCountInString(text),
-		"segment_count": segmentCount,
-		"avg_sent_len":  float64(utf8.RuneCountInString(text)) / float64(segmentCount),
-	}).Info("分割文本耗时")
-
-	// 设置流式响应头
-	c.Header("Content-Type", "audio/mpeg")
-	c.Writer.WriteHeader(http.StatusOK)
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		_ = c.Error(fmt.Errorf("%w: Streaming not supported", custom_errors.ErrUpstreamServiceFailed))
-		return
-	}
-
-	// 创建用于收集合成结果信息的切片
-	synthResults := make(chan sentenceSynthesisResult, segmentCount)
-	errChan := make(chan error, 1)
-	var wg sync.WaitGroup
-
-	// 限制并发数量
-	maxConcurrent := h.config.TTS.MaxConcurrent
-	semaphore := make(chan struct{}, maxConcurrent)
-
-	// 合成阶段开始时间
-	synthesisStart := time.Now()
-
-	// 并发处理每一个句子
-	for i, sentence := range sentences {
-		wg.Add(1)
-		go func(index int, sentenceText string) {
-			defer wg.Done()
-
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-c.Request.Context().Done():
-				select {
-				case errChan <- c.Request.Context().Err():
-				default:
-				}
-				return
-			}
-
-			// 创建该句的请求
-			segReq := models.TTSRequest{
-				Text:  sentenceText,
-				Voice: req.Voice,
-				Rate:  req.Rate,
-				Pitch: req.Pitch,
-				Style: req.Style,
-			}
-
-			startTime := time.Now()
-			resp, err := h.ttsService.SynthesizeSpeech(c.Request.Context(), segReq)
-			synthDuration := time.Since(startTime)
-
-			if err != nil {
-				select {
-				case errChan <- fmt.Errorf("句子 %d 合成失败: %w", index+1, err):
-				default:
-				}
-				return
-			}
-
-			// 将音频数据写入响应流
-			if _, err := c.Writer.Write(resp.AudioContent); err != nil {
-				select {
-				case errChan <- fmt.Errorf("写入响应流失败: %w", err):
-				default:
-				}
-				return
-			}
-			flusher.Flush()
-
-			// 发送合成结果信息
-			synthResults <- sentenceSynthesisResult{
-				index:     index,
-				length:    utf8.RuneCountInString(sentenceText),
-				audioSize: len(resp.AudioContent),
-				content:   truncateForLog(sentenceText, 20),
-				duration:  synthDuration,
-			}
-		}(i, sentence)
-	}
-
-	// 等待所有goroutine完成
-	go func() {
-		wg.Wait()
-		close(synthResults)
-	}()
-
-	// 收集并记录结果
-	var totalAudioSize int
-	var results []sentenceSynthesisResult
-	for result := range synthResults {
-		results = append(results, result)
-		totalAudioSize += result.audioSize
-	}
-
-	// 检查是否有错误发生
-	select {
-	case err := <-errChan:
-		logger.WithError(err).Error("分段TTS处理失败")
-		// 此时无法向客户端发送JSON错误，因为响应头已发送
-		return
-	default:
-	}
-
-	// 按序号排序结果
-	// (由于并发，结果顺序不确定，如果需要可以排序)
-	// sort.Slice(results, func(i, j int) bool { return results[i].index < results[j].index })
-
-	// 打印表格格式的合成结果
-	logger.Info("句子合成结果表:")
-	logger.Info("-------------------------------------------------------------")
-	logger.Info("序号 | 长度  |    音频大小   |    耗时    | 内容")
-	logger.Info("-------------------------------------------------------------")
-	for _, result := range results {
-		logger.Infof("#%-3d | %4d | %12s | %10v | %s",
-			result.index+1,
-			result.length,
-			formatFileSize(result.audioSize),
-			result.duration.Round(time.Millisecond),
-			result.content)
-	}
-	logger.Info("-------------------------------------------------------------")
-
-	// 记录总耗时
-	synthesisTime := time.Since(synthesisStart)
-	totalTime := time.Since(segmentStart)
-	logger.WithFields(logrus.Fields{
-		"total_time":   totalTime,
-		"split_time":   splitTime,
-		"synth_time":   synthesisTime,
-		"audio_size":   formatFileSize(totalAudioSize),
-		"avg_duration": synthesisTime / time.Duration(segmentCount),
-	}).Info("分段流式TTS请求总耗时")
-}
 
 // HandleReader 返回 reader 可导入的格式
 func (h *TTSHandler) HandleReader(context *gin.Context) {

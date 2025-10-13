@@ -472,71 +472,121 @@ document.addEventListener('DOMContentLoaded', function () {
         const pitch = pitchInput.value;
         const apiKey = apiKeyInput.value.trim();
 
-        // 保存表单数据
         saveFormData();
 
-        // 禁用按钮，显示加载状态
         speakButton.disabled = true;
-        speakButton.textContent = '生成中...';
+        speakButton.innerHTML = `
+            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            生成中... (0/0)
+        `;
 
         try {
-            // 构建URL参数
-            const params = new URLSearchParams({
-                t: text,
-                v: voice,
-                r: rate,
-                p: pitch
+            const response = await fetch(`${config.basePath}/tts`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-Key': apiKey,
+                },
+                body: JSON.stringify({
+                    text: text,
+                    voice: voice,
+                    style: style,
+                    rate: rate,
+                    pitch: pitch,
+                }),
             });
 
-            // 只有当style不为空时才添加
-            if (style) {
-                params.append('s', style);
-            }
-
-            // 添加API Key参数（如果有）
-            if (apiKey) {
-                params.append('api_key', apiKey);
-            }
-
-            const url = `${config.basePath}/tts?${params.toString()}`;
-
-            // 使用fetch发送请求以便捕获HTTP状态码
-            const response = await fetch(url);
-
             if (response.status === 401) {
-                // 显示API Key输入框
                 apiKeyGroup.classList.remove('hidden');
                 showCustomAlert('请输入有效的API Key以继续操作', 'error');
                 throw new Error('需要API Key授权');
             }
 
             if (!response.ok) {
-                throw new Error(`HTTP错误: ${response.status}`);
+                const errorData = await response.json().catch(() => ({ error: `HTTP错误: ${response.status}` }));
+                throw new Error(errorData.error || `HTTP错误: ${response.status}`);
             }
 
-            // 获取音频blob
-            const blob = await response.blob();
-            const audioUrl = URL.createObjectURL(blob);
+            // 检查响应是音频还是JSON
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.includes("application/json")) {
+                const data = await response.json();
+                if (data.job_id) {
+                    // 异步任务，开始轮询
+                    showCustomAlert('长文本任务已开始，请稍候...', 'info');
+                    pollJobStatus(data.job_id, apiKey);
+                }
+            } else {
+                // 同步任务，直接播放音频
+                const blob = await response.blob();
+                const audioUrl = URL.createObjectURL(blob);
+                audioPlayer.src = audioUrl;
+                lastAudioUrl = audioUrl;
+                resultSection.classList.remove('hidden');
+                audioPlayer.play();
+                // 恢复按钮状态
+                speakButton.disabled = false;
+                speakButton.textContent = '转换为语音';
+            }
 
-            // 更新音频播放器
-            audioPlayer.src = audioUrl;
-            lastAudioUrl = url; // 保存原始URL用于下载和复制链接
-
-            // 显示结果区域
-            resultSection.classList.remove('hidden');
-
-            // 播放音频
-            audioPlayer.play();
         } catch (error) {
             console.error('生成语音失败:', error);
-            if (error.message !== '需要API Key授权') {
-                showCustomAlert('生成语音失败，请重试', 'error');
-            }
-        } finally {
-            // 恢复按钮状态
+            showCustomAlert(error.message, 'error');
             speakButton.disabled = false;
             speakButton.textContent = '转换为语音';
         }
+    }
+
+    // 轮询作业状态
+    function pollJobStatus(jobId, apiKey) {
+        const interval = setInterval(async () => {
+            try {
+                const response = await fetch(`${config.basePath}/tts/status/${jobId}`, {
+                    headers: { 'X-API-Key': apiKey }
+                });
+
+                if (!response.ok) {
+                    throw new Error('状态查询失败');
+                }
+
+                const data = await response.json();
+
+                // 更新UI
+                speakButton.innerHTML = `
+                    <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    生成中... (${data.progress || '...'})
+                `;
+
+                if (data.status === 'complete') {
+                    clearInterval(interval);
+                    showCustomAlert('语音合成成功!', 'success');
+                    const audioUrl = `${config.basePath}/tts/result/${jobId}?api_key=${apiKey}`;
+                    audioPlayer.src = audioUrl;
+                    lastAudioUrl = audioUrl;
+                    resultSection.classList.remove('hidden');
+                    audioPlayer.play();
+                    speakButton.disabled = false;
+                    speakButton.textContent = '转换为语音';
+                } else if (data.status === 'error') {
+                    clearInterval(interval);
+                    showCustomAlert(`合成失败: ${data.error}`, 'error');
+                    speakButton.disabled = false;
+                    speakButton.textContent = '转换为语音';
+                }
+            } catch (error) {
+                clearInterval(interval);
+                console.error('轮询失败:', error);
+                showCustomAlert('轮询任务状态失败', 'error');
+                speakButton.disabled = false;
+                speakButton.textContent = '转换为语音';
+            }
+        }, 2000); // 每2秒轮询一次
     }
 
     // 保存API Key到localStorage
