@@ -3,6 +3,8 @@ name: CI Pipeline
 on:
   push:
     branches: [ "main", "develop" ]
+    tags:
+      - 'v*.*.*'
   pull_request:
     branches: [ "main" ]
 
@@ -59,7 +61,6 @@ jobs:
     needs: test
     strategy:
       matrix:
-        os: [linux, windows]
         arch: [amd64, arm64]
     steps:
     - uses: actions/checkout@v4
@@ -72,17 +73,13 @@ jobs:
 
     - name: Build binary
       env:
-        GOOS: ${{ matrix.os }}
+        GOOS: linux
         GOARCH: ${{ matrix.arch }}
       run: |
-        OUTPUT_NAME="tts"
-        if [ "${{ matrix.os }}" = "windows" ]; then
-          OUTPUT_NAME="tts.exe"
-        fi
-        go build -ldflags="-w -s" -o ${OUTPUT_NAME} ./cmd/api
+        go build -ldflags="-w -s" -o main ./cmd/api
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: tts-${{ matrix.os }}-${{ matrix.arch }}
-        path: tts*
+        name: binary-linux-${{ matrix.arch }}
+        path: main

@@ -14,6 +14,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"tts/internal/config"
+	custom_errors "tts/internal/errors"
 	"tts/internal/models"
 	"tts/internal/utils"
 )
@@ -307,7 +308,7 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 			"status_code": resp.StatusCode,
 			"body":        string(body),
 		}).Error("TTS API错误")
-		return nil, fmt.Errorf("TTS API错误: %s, 状态码: %d", string(body), resp.StatusCode)
+		return nil, custom_errors.NewUpstreamError(resp.StatusCode, "TTS API 错误", fmt.Errorf(string(body)))
 	}
 
 	return resp, nil

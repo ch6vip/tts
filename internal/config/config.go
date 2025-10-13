@@ -5,8 +5,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -98,8 +96,6 @@ func Load(configPath string) (*Config, error) {
 			return
 		}
 
-		// 从环境变量覆盖配置（优先级最高）
-		loadFromEnvironment(&config)
 	})
 
 	if err != nil {
@@ -109,106 +105,6 @@ func Load(configPath string) (*Config, error) {
 	return &config, nil
 }
 
-// loadFromEnvironment 从环境变量加载并覆盖配置
-func loadFromEnvironment(cfg *Config) {
-	// 服务器配置
-	if port := os.Getenv("TTS_SERVER_PORT"); port != "" {
-		if p, err := strconv.Atoi(port); err == nil {
-			cfg.Server.Port = p
-		}
-	}
-	if readTimeout := os.Getenv("TTS_SERVER_READ_TIMEOUT"); readTimeout != "" {
-		if t, err := strconv.Atoi(readTimeout); err == nil {
-			cfg.Server.ReadTimeout = t
-		}
-	}
-	if writeTimeout := os.Getenv("TTS_SERVER_WRITE_TIMEOUT"); writeTimeout != "" {
-		if t, err := strconv.Atoi(writeTimeout); err == nil {
-			cfg.Server.WriteTimeout = t
-		}
-	}
-	if basePath := os.Getenv("TTS_SERVER_BASE_PATH"); basePath != "" {
-		cfg.Server.BasePath = basePath
-	}
-
-	// TTS 配置
-	if apiKey := os.Getenv("TTS_API_KEY"); apiKey != "" {
-		cfg.TTS.ApiKey = apiKey
-	}
-	if region := os.Getenv("TTS_REGION"); region != "" {
-		cfg.TTS.Region = region
-	}
-	if defaultVoice := os.Getenv("TTS_DEFAULT_VOICE"); defaultVoice != "" {
-		cfg.TTS.DefaultVoice = defaultVoice
-	}
-	if defaultRate := os.Getenv("TTS_DEFAULT_RATE"); defaultRate != "" {
-		cfg.TTS.DefaultRate = defaultRate
-	}
-	if defaultPitch := os.Getenv("TTS_DEFAULT_PITCH"); defaultPitch != "" {
-		cfg.TTS.DefaultPitch = defaultPitch
-	}
-	if defaultFormat := os.Getenv("TTS_DEFAULT_FORMAT"); defaultFormat != "" {
-		cfg.TTS.DefaultFormat = defaultFormat
-	}
-	if maxTextLength := os.Getenv("TTS_MAX_TEXT_LENGTH"); maxTextLength != "" {
-		if m, err := strconv.Atoi(maxTextLength); err == nil {
-			cfg.TTS.MaxTextLength = m
-		}
-	}
-	if requestTimeout := os.Getenv("TTS_REQUEST_TIMEOUT"); requestTimeout != "" {
-		if t, err := strconv.Atoi(requestTimeout); err == nil {
-			cfg.TTS.RequestTimeout = t
-		}
-	}
-	if maxConcurrent := os.Getenv("TTS_MAX_CONCURRENT"); maxConcurrent != "" {
-		if m, err := strconv.Atoi(maxConcurrent); err == nil {
-			cfg.TTS.MaxConcurrent = m
-		}
-	}
-	if segmentThreshold := os.Getenv("TTS_SEGMENT_THRESHOLD"); segmentThreshold != "" {
-		if s, err := strconv.Atoi(segmentThreshold); err == nil {
-			cfg.TTS.SegmentThreshold = s
-		}
-	}
-	if minSentenceLength := os.Getenv("TTS_MIN_SENTENCE_LENGTH"); minSentenceLength != "" {
-		if m, err := strconv.Atoi(minSentenceLength); err == nil {
-			cfg.TTS.MinSentenceLength = m
-		}
-	}
-	if maxSentenceLength := os.Getenv("TTS_MAX_SENTENCE_LENGTH"); maxSentenceLength != "" {
-		if m, err := strconv.Atoi(maxSentenceLength); err == nil {
-			cfg.TTS.MaxSentenceLength = m
-		}
-	}
-
-	// OpenAI 配置
-	if openaiKey := os.Getenv("OPENAI_API_KEY"); openaiKey != "" {
-		cfg.OpenAI.ApiKey = openaiKey
-	}
-
-	// 日志配置
-	if logLevel := os.Getenv("TTS_LOG_LEVEL"); logLevel != "" {
-		cfg.Log.Level = logLevel
-	}
-	if logFormat := os.Getenv("TTS_LOG_FORMAT"); logFormat != "" {
-		cfg.Log.Format = logFormat
-	}
-
-	// 缓存配置
-	if cacheEnabled := os.Getenv("TTS_CACHE_ENABLED"); cacheEnabled != "" {
-		cfg.Cache.Enabled = strings.ToLower(cacheEnabled) == "true"
-	}
-	if cacheExpiration := os.Getenv("TTS_CACHE_EXPIRATION_MINUTES"); cacheExpiration != "" {
-		if e, err := strconv.Atoi(cacheExpiration); err == nil {
-			cfg.Cache.ExpirationMinutes = e
-		}
-	}
-	if cacheCleanup := os.Getenv("TTS_CACHE_CLEANUP_INTERVAL_MINUTES"); cacheCleanup != "" {
-		if c, err := strconv.Atoi(cacheCleanup); err == nil {
-			cfg.Cache.CleanupIntervalMinutes = c
-		}
-	}
-}
 
 // Get 返回已加载的配置
 func Get() *Config {
