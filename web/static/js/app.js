@@ -10,7 +10,7 @@ function saveApiKey() {
 
             // 显示成功消息和安全提示
             showCustomAlert(
-                'API Key 已成功保存到浏览器本地存储 (localStorage)。请注意：此密钥仅存储在您的设备上，但建议不要在公共或共享设备上保存敏感信息。',
+                'API Key 已保存到浏览器本地存储。请注意，此密钥仅存储在您的设备上，在公共或共享设备上操作时请谨慎。',
                 'success',
                 'API Key 已保存',
                 5000

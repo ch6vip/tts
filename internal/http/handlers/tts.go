@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -190,14 +192,20 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 
 	if err != nil {
 		// 分类错误并提供详细信息
-		errType := classifyUpstreamError(err, 0)
+		var statusCode int
+		var upstreamErr *custom_errors.UpstreamError
+		if errors.As(err, &upstreamErr) {
+			statusCode = upstreamErr.StatusCode
+		}
+		errType := classifyUpstreamError(err, statusCode)
 		detailedMsg := getDetailedErrorMessage(errType, err)
-		
+
 		logger.WithFields(logrus.Fields{
-			"error_type": errType,
+			"error_type":     errType,
 			"original_error": err,
+			"status_code":    statusCode,
 		}).Error("TTS合成失败")
-		
+
 		_ = c.Error(fmt.Errorf("%w: %s", custom_errors.ErrUpstreamServiceFailed, detailedMsg))
 		return
 	}
@@ -371,13 +379,13 @@ type sentenceSynthesisResult struct {
 	duration  time.Duration
 }
 
-// handleSegmentedTTS 处理分段TTS请求，使用流式合并减少延迟
+// handleSegmentedTTS 处理分段TTS请求，并发合成后一次性返回
 func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 	segmentStart := time.Now()
 	text := req.Text
 	logger := getLoggerWithTraceID(c)
 
-	// 开始计时：分割文本
+	// 1. 分割文本
 	splitStart := time.Now()
 	sentences := splitTextBySentences(text)
 	segmentCount := len(sentences)
@@ -387,167 +395,150 @@ func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 		"duration":      splitTime,
 		"total_length":  utf8.RuneCountInString(text),
 		"segment_count": segmentCount,
-		"avg_sent_len":  float64(utf8.RuneCountInString(text)) / float64(segmentCount),
 	}).Info("分割文本耗时")
 
-	// 设置流式响应头
-	c.Header("Content-Type", "audio/mpeg")
-	c.Writer.WriteHeader(http.StatusOK)
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		_ = c.Error(fmt.Errorf("%w: Streaming not supported", custom_errors.ErrUpstreamServiceFailed))
-		return
+	// 用于收集结果和错误
+	type synthesisResult struct {
+		index        int
+		audioContent []byte
+		err          error
+		stat         sentenceSynthesisResult
 	}
 
-	// 创建有序通道用于按顺序输出音频
-	type orderedAudio struct {
-		index     int
-		audio     []byte
-		length    int
-		duration  time.Duration
-		content   string
-	}
-	
-	audioChan := make(chan orderedAudio, segmentCount)
-	errChan := make(chan error, 1)
+	resultsChan := make(chan synthesisResult, segmentCount)
 	var wg sync.WaitGroup
 
 	// 限制并发数量
 	maxConcurrent := h.config.TTS.MaxConcurrent
 	semaphore := make(chan struct{}, maxConcurrent)
 
-	// 合成阶段开始时间
+	// 2. 并发合成所有分段
 	synthesisStart := time.Now()
-
-	// 并发处理每一个句子
 	for i, sentence := range sentences {
 		wg.Add(1)
 		go func(index int, sentenceText string) {
 			defer wg.Done()
 
+			// 获取信号量或检查上下文是否取消
 			select {
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
 			case <-c.Request.Context().Done():
-				select {
-				case errChan <- c.Request.Context().Err():
-				default:
-				}
+				resultsChan <- synthesisResult{index: index, err: c.Request.Context().Err()}
 				return
 			}
 
-			// 创建该句的请求
+			// 创建分段请求
 			segReq := models.TTSRequest{
 				Text:  sentenceText,
-				Voice: req.Voice,
-				Rate:  req.Rate,
-				Pitch: req.Pitch,
-				Style: req.Style,
+				Voice: req.Voice, Rate: req.Rate, Pitch: req.Pitch, Style: req.Style,
 			}
 
+			// 执行合成
 			startTime := time.Now()
 			resp, err := h.ttsService.SynthesizeSpeech(c.Request.Context(), segReq)
 			synthDuration := time.Since(startTime)
 
-			if err != nil {
-				// 分类错误并记录
-				errType := classifyUpstreamError(err, 0)
-				detailedMsg := getDetailedErrorMessage(errType, err)
-				
-				select {
-				case errChan <- fmt.Errorf("句子 %d 合成失败: %s", index+1, detailedMsg):
-				default:
-				}
-				return
+			// 发送结果到通道
+			result := synthesisResult{
+				index: index,
+				err:   err,
+				stat: sentenceSynthesisResult{
+					index:    index,
+					length:   utf8.RuneCountInString(sentenceText),
+					duration: synthDuration,
+					content:  truncateForLog(sentenceText, 20),
+				},
 			}
-
-			// 发送音频到通道，保持顺序
-			audioChan <- orderedAudio{
-				index:    index,
-				audio:    resp.AudioContent,
-				length:   utf8.RuneCountInString(sentenceText),
-				duration: synthDuration,
-				content:  truncateForLog(sentenceText, 20),
+			if err == nil {
+				result.audioContent = resp.AudioContent
+				result.stat.audioSize = len(resp.AudioContent)
 			}
+			resultsChan <- result
 		}(i, sentence)
 	}
 
 	// 等待所有goroutine完成
-	go func() {
-		wg.Wait()
-		close(audioChan)
-	}()
+	wg.Wait()
+	close(resultsChan)
+	synthesisTime := time.Since(synthesisStart)
 
-	// 按顺序接收并流式输出音频
-	audioMap := make(map[int]orderedAudio)
-	nextIndex := 0
-	var totalAudioSize int
-	var results []sentenceSynthesisResult
-
-	for audio := range audioChan {
-		audioMap[audio.index] = audio
-		
-		// 按顺序输出已准备好的音频片段
-		for {
-			if orderedAudio, exists := audioMap[nextIndex]; exists {
-				// 立即写入响应流，实现真正的流式输出
-				if _, err := c.Writer.Write(orderedAudio.audio); err != nil {
-					logger.WithError(err).Error("写入响应流失败")
-					return
-				}
-				flusher.Flush()
-				
-				// 记录结果
-				totalAudioSize += len(orderedAudio.audio)
-				results = append(results, sentenceSynthesisResult{
-					index:     orderedAudio.index,
-					length:    orderedAudio.length,
-					audioSize: len(orderedAudio.audio),
-					content:   orderedAudio.content,
-					duration:  orderedAudio.duration,
-				})
-				
-				delete(audioMap, nextIndex)
-				nextIndex++
-			} else {
-				break
+	// 3. 收集并检查所有结果
+	var allResults []synthesisResult
+	var synthesisErrors []error
+	for result := range resultsChan {
+		allResults = append(allResults, result)
+		if result.err != nil {
+			// 提取状态码
+			var statusCode int
+			var upstreamErr *custom_errors.UpstreamError
+			if errors.As(result.err, &upstreamErr) {
+				statusCode = upstreamErr.StatusCode
 			}
+
+			// 分类错误并记录
+			errType := classifyUpstreamError(result.err, statusCode)
+			detailedMsg := getDetailedErrorMessage(errType, result.err)
+			wrappedErr := fmt.Errorf("句子 #%d 合成失败 (状态码: %d): %s", result.index+1, statusCode, detailedMsg)
+			synthesisErrors = append(synthesisErrors, wrappedErr)
 		}
 	}
 
-	// 检查是否有错误发生
-	select {
-	case err := <-errChan:
-		logger.WithError(err).Error("分段TTS处理失败")
+	// 4. 如果有任何失败，返回错误
+	if len(synthesisErrors) > 0 {
+		for _, e := range synthesisErrors {
+			logger.Error(e)
+		}
+		// 返回一个统一的错误给客户端
+		_ = c.Error(fmt.Errorf("%w: 分段合成失败，一个或多个片段无法生成", custom_errors.ErrUpstreamServiceFailed))
 		return
-	default:
 	}
 
-	// 打印表格格式的合成结果
+	// 5. 如果全部成功，按顺序合并并写入响应
+	// 按索引排序以确保顺序正确
+	sort.Slice(allResults, func(i, j int) bool {
+		return allResults[i].index < allResults[j].index
+	})
+
+	// 打印结果日志
 	logger.Info("句子合成结果表:")
 	logger.Info("-------------------------------------------------------------")
 	logger.Info("序号 | 长度  |    音频大小   |    耗时    | 内容")
 	logger.Info("-------------------------------------------------------------")
-	for _, result := range results {
+	var totalAudioSize int
+	var finalAudioContent []byte
+	for _, result := range allResults {
 		logger.Infof("#%-3d | %4d | %12s | %10v | %s",
-			result.index+1,
-			result.length,
-			formatFileSize(result.audioSize),
-			result.duration.Round(time.Millisecond),
-			result.content)
+			result.stat.index+1,
+			result.stat.length,
+			formatFileSize(result.stat.audioSize),
+			result.stat.duration.Round(time.Millisecond),
+			result.stat.content)
+		totalAudioSize += result.stat.audioSize
+		finalAudioContent = append(finalAudioContent, result.audioContent...)
 	}
 	logger.Info("-------------------------------------------------------------")
 
+	// 写入HTTP响应
+	writeStart := time.Now()
+	c.Header("Content-Type", "audio/mpeg")
+	if _, err := c.Writer.Write(finalAudioContent); err != nil {
+		logger.WithError(err).Error("写入响应失败")
+		// 此时可能已无法向客户端发送错误，仅记录日志
+		return
+	}
+	writeTime := time.Since(writeStart)
+
 	// 记录总耗时
-	synthesisTime := time.Since(synthesisStart)
 	totalTime := time.Since(segmentStart)
 	logger.WithFields(logrus.Fields{
 		"total_time":   totalTime,
 		"split_time":   splitTime,
 		"synth_time":   synthesisTime,
+		"write_time":   writeTime,
 		"audio_size":   formatFileSize(totalAudioSize),
 		"avg_duration": synthesisTime / time.Duration(segmentCount),
-	}).Info("分段流式TTS请求总耗时")
+	}).Info("分段TTS请求总耗时")
 }
 
 // HandleReader 返回 reader 可导入的格式
