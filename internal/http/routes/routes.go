@@ -27,7 +27,8 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 
 	// 应用中间件
 	router.Use(middleware.Logger()) // 日志中间件
-	router.Use(middleware.CORS())   // CORS中间件
+	router.Use(middleware.CORS())      // CORS中间件
+	router.Use(middleware.ErrorHandler()) // 错误处理中间件
 
 	// 应用基础路径前缀
 	var baseRouter gin.IRoutes

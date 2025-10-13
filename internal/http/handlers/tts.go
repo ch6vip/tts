@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	custom_errors "tts/internal/errors"
 	"tts/internal/config"
 	"tts/internal/models"
 	"tts/internal/tts"
@@ -126,7 +127,7 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 	logger := getLoggerWithTraceID(c)
 	if req.Text == "" {
 		logger.Error("错误: 未提供文本参数")
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "必须提供文本参数"})
+		_ = c.Error(fmt.Errorf("%w: 必须提供文本参数", custom_errors.ErrInvalidInput))
 		return
 	}
 
@@ -136,7 +137,7 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 	// 检查文本长度
 	reqTextLength := utf8.RuneCountInString(req.Text)
 	if reqTextLength > h.config.TTS.MaxTextLength {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "文本长度超过限制"})
+		_ = c.Error(fmt.Errorf("%w: 文本长度超过 %d 字符的限制", custom_errors.ErrInvalidInput, h.config.TTS.MaxTextLength))
 		return
 	}
 
@@ -161,7 +162,7 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 
 	if err != nil {
 		logger.WithError(err).Error("TTS合成失败")
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "语音合成失败: " + err.Error()})
+		_ = c.Error(fmt.Errorf("%w: %v", custom_errors.ErrUpstreamServiceFailed, err))
 		return
 	}
 
@@ -207,7 +208,7 @@ func (h *TTSHandler) HandleTTS(c *gin.Context) {
 	case http.MethodPost:
 		h.HandleTTSPost(c)
 	default:
-		c.AbortWithStatusJSON(http.StatusMethodNotAllowed, gin.H{"error": "仅支持GET和POST请求"})
+		_ = c.Error(fmt.Errorf("%w: 仅支持GET和POST请求", custom_errors.ErrInvalidInput))
 	}
 }
 
@@ -240,14 +241,14 @@ func (h *TTSHandler) HandleTTSPost(c *gin.Context) {
 		err = c.ShouldBindJSON(&req)
 		if err != nil {
 			getLoggerWithTraceID(c).WithError(err).Error("JSON解析错误")
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "无效的JSON请求"})
+			_ = c.Error(fmt.Errorf("%w: 无效的JSON请求: %v", custom_errors.ErrInvalidInput, err))
 			return
 		}
 	} else {
 		err = c.ShouldBind(&req)
 		if err != nil {
 			getLoggerWithTraceID(c).WithError(err).Error("表单解析错误")
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "无法解析表单数据"})
+			_ = c.Error(fmt.Errorf("%w: 无法解析表单数据: %v", custom_errors.ErrInvalidInput, err))
 			return
 		}
 	}
@@ -262,14 +263,14 @@ func (h *TTSHandler) HandleOpenAITTS(c *gin.Context) {
 
 	// 只支持POST请求
 	if c.Request.Method != http.MethodPost {
-		c.AbortWithStatusJSON(http.StatusMethodNotAllowed, gin.H{"error": "仅支持POST请求"})
+		_ = c.Error(fmt.Errorf("%w: 仅支持POST请求", custom_errors.ErrInvalidInput))
 		return
 	}
 
 	// 解析请求
 	var openaiReq models.OpenAIRequest
 	if err := c.ShouldBindJSON(&openaiReq); err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "无效的JSON请求: " + err.Error()})
+		_ = c.Error(fmt.Errorf("%w: 无效的JSON请求: %v", custom_errors.ErrInvalidInput, err))
 		return
 	}
 
@@ -277,7 +278,7 @@ func (h *TTSHandler) HandleOpenAITTS(c *gin.Context) {
 
 	// 检查必需字段
 	if openaiReq.Input == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "input字段不能为空"})
+		_ = c.Error(fmt.Errorf("%w: input字段不能为空", custom_errors.ErrInvalidInput))
 		return
 	}
 
@@ -357,7 +358,7 @@ func (h *TTSHandler) handleSegmentedTTS(c *gin.Context, req models.TTSRequest) {
 	c.Writer.WriteHeader(http.StatusOK)
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Streaming not supported"})
+		_ = c.Error(fmt.Errorf("%w: Streaming not supported", custom_errors.ErrUpstreamServiceFailed))
 		return
 	}
 
@@ -501,7 +502,7 @@ func (h *TTSHandler) HandleReader(context *gin.Context) {
 	baseUrl := utils.GetBaseURL(context)
 	basePath, err := utils.JoinURL(baseUrl, cfg.Server.BasePath)
 	if err != nil {
-		context.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		_ = context.Error(fmt.Errorf("%w: %v", custom_errors.ErrUpstreamServiceFailed, err))
 		return
 	}
 
@@ -536,7 +537,7 @@ func (h *TTSHandler) HandleReader(context *gin.Context) {
 		Url:  url,
 	}); err != nil {
 		getLoggerWithTraceID(context).WithError(err).Error("写入响应失败")
-		context.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "写入响应失败"})
+		_ = context.Error(fmt.Errorf("%w: 写入响应失败", custom_errors.ErrUpstreamServiceFailed))
 	}
 }
 
@@ -555,7 +556,7 @@ func (h *TTSHandler) HandleIFreeTime(context *gin.Context) {
 	baseUrl := utils.GetBaseURL(context)
 	basePath, err := utils.JoinURL(baseUrl, cfg.Server.BasePath)
 	if err != nil {
-		context.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		_ = context.Error(fmt.Errorf("%w: %v", custom_errors.ErrUpstreamServiceFailed, err))
 		return
 	}
 

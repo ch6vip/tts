@@ -13,7 +13,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # 将源代码复制到工作目录
-COPY . .
+COPY cmd ./cmd
+COPY internal ./internal
+COPY web ./web
+COPY configs ./configs
 
 # 构建 Go 应用程序
 RUN go build -o main ./cmd/api/main.go
@@ -31,6 +34,10 @@ RUN apk update --no-cache && \
 COPY --from=builder /app/main .
 COPY --from=builder /app/web ./web
 COPY --from=builder /app/configs ./configs
+
+# 创建一个非 root 用户来运行应用程序
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
 
 # 设置时区
 ENV TZ=Asia/Shanghai
