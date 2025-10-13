@@ -1,0 +1,11 @@
+{
+  "name": "tts-frontend",
+  "version": "1.0.0",
+  "description": "Frontend assets for TTS service",
+  "scripts": {
+    "build:css": "tailwindcss -i ./web/static/css/input.css -o ./web/static/css/output.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.1"
+  }
+}
