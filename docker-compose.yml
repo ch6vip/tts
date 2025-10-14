@@ -3,16 +3,14 @@ services:
   tts:
     image: ch6vip/ch6vip-tts:main
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8081:8080"
     restart: always
-    # --- 高级配置示例 ---
-    #
-    # 如果您需要自定义配置文件，请取消下面的注释，
-    # 这会将您本地的 configs/config.yaml 文件挂载到容器中。
-    # volumes:
-    #   - ./configs/config.yaml:/app/configs/config.yaml
-    #
-    # 如果您需要设置环境变量，例如服务端口或 API 密钥，请取消下面的注释。
-    # environment:
-    #   - SERVER_PORT=8080
-    #   - OPENAI_API_KEY=your_openai_api_key_here
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --cleanup --include-stopped --label-enable
+    restart: always
