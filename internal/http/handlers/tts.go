@@ -92,21 +92,6 @@ func getLoggerWithTraceID(c *gin.Context) *logrus.Entry {
 	return logrus.WithField("trace_id", traceID)
 }
 
-// truncateForLog 截断文本用于日志显示，同时显示开头和结尾
-func truncateForLog(text string, maxLength int) string {
-	// 先去除换行符
-	text = strings.ReplaceAll(text, "\n", " ")
-	text = strings.ReplaceAll(text, "\r", " ")
-
-	runes := []rune(text)
-	if len(runes) <= maxLength {
-		return text
-	}
-	// 计算开头和结尾各显示多少字符
-	halfLength := maxLength / 2
-	return string(runes[:halfLength]) + "..." + string(runes[len(runes)-halfLength:])
-}
-
 // formatFileSize 格式化文件大小
 func formatFileSize(size int) string {
 	switch {
