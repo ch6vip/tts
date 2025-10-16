@@ -18,8 +18,36 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 	// 创建Gin路由
 	router := gin.New()
 
+	// 获取底层的 microsoft.Client 用于长文本服务
+	var msClient *microsoft.Client
+	
+	// 如果是缓存服务,需要获取底层服务
+	type underlyingServiceGetter interface {
+		GetUnderlyingService() tts.Service
+	}
+	
+	if cacheSvc, ok := ttsService.(underlyingServiceGetter); ok {
+		// 从缓存层获取底层服务
+		msClient = cacheSvc.GetUnderlyingService().(*microsoft.Client)
+	} else {
+		// 直接使用原始服务
+		msClient = ttsService.(*microsoft.Client)
+	}
+
+	// 创建长文本 TTS 服务
+	longTextService := tts.NewLongTextTTSService(
+		msClient,
+		tts.LongTextConfig{
+			MaxSegmentLength: cfg.TTS.LongText.MaxSegmentLength,
+			WorkerCount:      cfg.TTS.LongText.WorkerCount,
+			MinTextForSplit:  cfg.TTS.LongText.MinTextForSplit,
+			FFmpegPath:       cfg.TTS.LongText.FFmpegPath,
+			UseSmartSegment:  cfg.TTS.LongText.UseSmartSegment,
+		},
+	)
+
 	// 创建处理器
-	ttsHandler := handlers.NewTTSHandler(ttsService, cfg)
+	ttsHandler := handlers.NewTTSHandler(ttsService, longTextService, cfg)
 	voicesHandler := handlers.NewVoicesHandler(ttsService)
 
 	// 创建页面处理器

@@ -1,0 +1,93 @@
+# ============================================
+# 优化的多阶段 Dockerfile
+# ============================================
+
+# 阶段 1: 依赖下载阶段 (利用 Docker 层缓存)
+FROM golang:1.23-alpine AS deps
+
+WORKDIR /app
+
+# 仅复制 go.mod 和 go.sum,充分利用 Docker 层缓存
+# 只有依赖变化时才会重新执行此层
+COPY go.mod go.sum ./
+
+# 使用 go mod download 并验证依赖
+# go mod download: 下载依赖到模块缓存
+# go mod verify: 验证依赖的完整性
+RUN go mod download && \
+    go mod verify
+
+# ============================================
+# 阶段 2: 构建阶段
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /app
+
+# 从依赖阶段复制已下载的模块缓存
+COPY --from=deps /go/pkg/mod /go/pkg/mod
+COPY go.mod go.sum ./
+
+# 复制源代码
+COPY . .
+
+# 构建应用程序
+# CGO_ENABLED=0: 禁用 CGO,生成纯静态二进制
+# -ldflags 参数说明:
+#   -s: 去除符号表
+#   -w: 去除 DWARF 调试信息
+#   -trimpath: 去除文件系统路径
+ARG VERSION=dev
+ARG BUILD_TIME
+ARG TARGETARCH
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build \
+    -ldflags="-s -w" \
+    -trimpath \
+    -o /app/main \
+    ./cmd/api
+
+# ============================================
+# 阶段 3: 最终运行镜像 (使用 distroless/static-debian12)
+# 
+# 镜像选择对比:
+# - scratch: 最小 (~0 MB),但缺少 CA 证书、时区数据等
+# - alpine: 小 (~5 MB),但包含不必要的 shell 和工具
+# - distroless/static: 最佳选择 (~2 MB),包含必要的运行时库、CA 证书、时区数据
+# - distroless/base: 较大 (~20 MB),包含 glibc,不适合静态链接的 Go 程序
+FROM gcr.io/distroless/static-debian12:nonroot
+
+# 设置标签
+LABEL maintainer="your-email@example.com" \
+      org.opencontainers.image.title="TTS Service" \
+      org.opencontainers.image.description="Text-to-Speech Service" \
+      org.opencontainers.image.source="https://github.com/yourusername/tts"
+
+# 从构建器阶段复制二进制文件
+# 使用 --chown 确保文件所有权正确 (nonroot:nonroot = 65532:65532)
+COPY --from=builder --chown=nonroot:nonroot /app/main /app/main
+
+# 复制配置文件 (确保不包含敏感信息)
+# 生产环境应该通过环境变量或挂载卷提供配置
+COPY --chown=nonroot:nonroot configs /app/configs
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置时区环境变量
+ENV TZ=Asia/Shanghai
+
+# 暴露端口 (使用非特权端口)
+EXPOSE 8080
+
+# 健康检查 (distroless 没有 shell,需要使用二进制自身的健康检查端点)
+# 如果应用支持健康检查端点,可以启用
+# HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+#   CMD ["/app/main", "healthcheck"]
+
+# 以非 root 用户运行
+# nonroot 镜像默认已经设置了 USER nonroot
+USER nonroot:nonroot
+
+# 运行应用程序
+ENTRYPOINT ["/app/main"]

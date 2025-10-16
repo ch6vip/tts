@@ -18,6 +18,16 @@ tts:
   max_sentence_length: 300
   api_key: ''
 
+  # 长文本处理优化配置
+  long_text:
+    enabled: true                    # 启用长文本优化处理
+    max_segment_length: 500          # 每个分段最大字符数（建议 400-600）
+    worker_count: 5                  # 并发 worker 数量（建议 3-10）
+    min_text_for_split: 1000         # 触发分段的最小文本长度
+    ffmpeg_path: ""                  # FFmpeg 路径（留空使用系统 PATH）
+    use_smart_segment: true          # 使用智能分段（基于句子边界）
+    use_ffmpeg_merge: true           # 使用 FFmpeg 合并音频（推荐开启）
+
   # OpenAI 到微软 TTS 中文语音的映射
   voice_mapping:
     alloy: "zh-CN-XiaoyiNeural"       # 中性女声

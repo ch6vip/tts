@@ -1,0 +1,205 @@
+name: CI Pipeline (Optimized)
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  GO_VERSION: '1.23'
+  REGISTRY: docker.io
+  IMAGE_NAME: ch6vip/ch6vip-tts
+
+# 并发控制：同一分支的新推送会取消旧的运行
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Code Linting
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
+        args: --timeout=5m
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    # 注意: go mod download 通过 setup-go 的 cache: true 自动执行
+    # 此步骤可选，仅用于显式验证依赖完整性
+    - name: Verify dependencies
+      run: go mod verify
+
+    - name: Run tests
+      run: go test -v -race -coverprofile=coverage.out ./...
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.out
+        flags: unittests
+        fail_ci_if_error: false
+
+  # ============================================
+  # Docker 构建与推送优化版本
+  # ============================================
+  build-and-push-docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [test]
+    # 仅在以下情况执行：main 分支、develop 分支或发布标签
+    if: |
+      github.ref == 'refs/heads/main' || 
+      github.ref == 'refs/heads/develop' || 
+      startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ============================================
+      # 构建元数据生成（智能标签管理）
+      # ============================================
+      - name: Generate build metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # 分支标签 (main/develop)
+            type=ref,event=branch
+            # 语义化版本标签 (v1.0.0 -> 1.0.0, 1.0, 1)
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            # SHA 标签 (main-abc123def456)
+            type=sha,prefix={{branch}}-
+            # 仅在 main 分支添加 latest 标签
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=TTS Service
+            org.opencontainers.image.description=Text-to-Speech Service
+            org.opencontainers.image.version={{version}}
+            org.opencontainers.image.revision={{sha}}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      # ============================================
+      # 仅在生产环境登录 Docker Hub
+      # ============================================
+      - name: Log in to Docker Hub
+        if: |
+          github.event_name != 'pull_request' && 
+          (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # ============================================
+      # 构建并推送 (生产/发布环境)
+      # ============================================
+      - name: Build and push (production)
+        id: build
+        if: |
+          github.event_name != 'pull_request' &&
+          (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.optimized
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+
+      # ============================================
+      # 构建仅本地 (PR 和开发环境)
+      # ============================================
+      - name: Build only (PR/development)
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/develop'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.optimized
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}-dev
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+
+      # ============================================
+      # 镜像摘要输出
+      # ============================================
+      - name: Image digest
+        if: steps.build.outputs.digest
+        run: echo ${{ steps.build.outputs.digest }}
+
+  # ============================================
+  # 安全扫描 (推荐启用)
+  # ============================================
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Upload Trivy results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'

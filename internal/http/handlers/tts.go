@@ -124,15 +124,17 @@ func formatFileSize(size int) string {
 
 // TTSHandler 处理TTS请求
 type TTSHandler struct {
-	ttsService tts.Service
-	config     *config.Config
+	ttsService     tts.Service
+	longTextService *tts.LongTextTTSService
+	config         *config.Config
 }
 
 // NewTTSHandler 创建一个新的TTS处理器
-func NewTTSHandler(service tts.Service, cfg *config.Config) *TTSHandler {
+func NewTTSHandler(service tts.Service, longTextService *tts.LongTextTTSService, cfg *config.Config) *TTSHandler {
 	return &TTSHandler{
-		ttsService: service,
-		config:     cfg,
+		ttsService:      service,
+		longTextService: longTextService,
+		config:          cfg,
 	}
 }
 
@@ -176,8 +178,8 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 		logger.WithFields(logrus.Fields{
 			"text_length": reqTextLength,
 			"threshold":   segmentThreshold,
-		}).Info("文本长度超过阈值，使用分段处理")
-		h.handleSegmentedTTS(c, req)
+		}).Info("文本长度超过阈值，使用优化的分段处理")
+		h.handleOptimizedSegmentedTTS(c, req, startTime)
 		return
 	}
 
@@ -694,4 +696,62 @@ func (h *TTSHandler) splitTextBySentences(text string) []string {
 		"after":  len(shortSentences),
 	}).Info("分割后的句子数")
 	return shortSentences
+}
+
+// handleOptimizedSegmentedTTS 使用优化的长文本服务处理分段TTS请求
+func (h *TTSHandler) handleOptimizedSegmentedTTS(c *gin.Context, req models.TTSRequest, startTime time.Time) {
+	logger := getLoggerWithTraceID(c)
+	
+	// 使用长文本 TTS 服务进行合成
+	synthStart := time.Now()
+	resp, err := h.longTextService.SynthesizeSpeech(c.Request.Context(), req)
+	synthTime := time.Since(synthStart)
+	
+	if err != nil {
+		// 分类错误并提供详细信息
+		var statusCode int
+		var upstreamErr *custom_errors.UpstreamError
+		if errors.As(err, &upstreamErr) {
+			statusCode = upstreamErr.StatusCode
+		}
+		errType := classifyUpstreamError(err, statusCode)
+		detailedMsg := getDetailedErrorMessage(errType, err)
+		
+		logger.WithFields(logrus.Fields{
+			"error_type":     errType,
+			"original_error": err,
+			"status_code":    statusCode,
+		}).Error("优化的分段TTS合成失败")
+		
+		_ = c.Error(fmt.Errorf("%w: %s", custom_errors.ErrUpstreamServiceFailed, detailedMsg))
+		return
+	}
+	
+	// 获取工作池统计信息
+	stats := h.longTextService.GetStats()
+	logger.WithFields(logrus.Fields{
+		"total_jobs":     stats.TotalJobs,
+		"completed_jobs": stats.CompletedJobs,
+		"failed_jobs":    stats.FailedJobs,
+		"success_rate":   fmt.Sprintf("%.2f%%", stats.SuccessRate),
+		"active_workers": stats.ActiveWorkers,
+	}).Info("工作池统计")
+	
+	// 设置响应
+	c.Header("Content-Type", "audio/mpeg")
+	writeStart := time.Now()
+	if _, err := c.Writer.Write(resp.AudioContent); err != nil {
+		logger.WithError(err).Error("写入响应失败")
+		return
+	}
+	writeTime := time.Since(writeStart)
+	
+	// 记录总耗时
+	totalTime := time.Since(startTime)
+	logger.WithFields(logrus.Fields{
+		"total_time":   totalTime,
+		"synth_time":   synthTime,
+		"write_time":   writeTime,
+		"audio_size":   formatFileSize(len(resp.AudioContent)),
+	}).Info("优化的分段TTS请求总耗时")
 }

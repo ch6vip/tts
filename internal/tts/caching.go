@@ -17,6 +17,11 @@ type cachingService struct {
 	cache *cache.Cache
 }
 
+// GetUnderlyingService returns the underlying service wrapped by the cache.
+func (s *cachingService) GetUnderlyingService() Service {
+	return s.next
+}
+
 // NewCachingService creates a new caching service.
 func NewCachingService(next Service, defaultExpiration, cleanupInterval time.Duration) Service {
 	return &cachingService{

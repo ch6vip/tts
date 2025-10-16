@@ -62,6 +62,20 @@ type TTSConfig struct {
 	MinSentenceLength int               `mapstructure:"min_sentence_length"`
 	MaxSentenceLength int               `mapstructure:"max_sentence_length"`
 	VoiceMapping      map[string]string `mapstructure:"voice_mapping"`
+	
+	// 长文本处理配置
+	LongText LongTextConfig `mapstructure:"long_text"`
+}
+
+// LongTextConfig 长文本 TTS 处理配置
+type LongTextConfig struct {
+	Enabled            bool   `mapstructure:"enabled"`              // 是否启用长文本优化处理
+	MaxSegmentLength   int    `mapstructure:"max_segment_length"`   // 每个分段的最大字符数（默认 500）
+	WorkerCount        int    `mapstructure:"worker_count"`         // 并发 worker 数量（默认 5）
+	MinTextForSplit    int    `mapstructure:"min_text_for_split"`   // 触发分段的最小文本长度（默认 1000）
+	FFmpegPath         string `mapstructure:"ffmpeg_path"`          // FFmpeg 可执行文件路径（留空使用系统 PATH）
+	UseSmartSegment    bool   `mapstructure:"use_smart_segment"`    // 是否使用智能分段（基于句子边界）
+	UseFFmpegMerge     bool   `mapstructure:"use_ffmpeg_merge"`     // 是否使用 FFmpeg 合并音频（推荐）
 }
 
 var (
