@@ -104,6 +104,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
+            # latest 标签（默认始终生成）
+            type=raw,value=latest
             # 分支标签 (main/develop)
             type=ref,event=branch
             # 语义化版本标签 (v1.0.0 -> 1.0.0, 1.0, 1)
@@ -112,8 +114,6 @@ jobs:
             type=semver,pattern={{major}}
             # SHA 标签 (main-abc123def456)
             type=sha,prefix={{branch}}-
-            # 仅在 main 分支添加 latest 标签
-            type=raw,value=latest,enable={{is_default_branch}}
           labels: |
             org.opencontainers.image.title=TTS Service
             org.opencontainers.image.description=Text-to-Speech Service
