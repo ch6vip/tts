@@ -49,6 +49,9 @@ jobs:
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
+        cache-dependency-path: |
+          **/go.sum
+          **/go.mod
 
     # 注意: go mod download 通过 setup-go 的 cache: true 自动执行
     # 此步骤可选，仅用于显式验证依赖完整性
@@ -186,6 +189,9 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     needs: [test]
+    permissions:
+      contents: read
+      security-events: write  # 需要此权限上传 SARIF
     steps:
     - uses: actions/checkout@v4
 
