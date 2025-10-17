@@ -375,21 +375,37 @@ func isTemporaryError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
-	// 网络临时错误
-	if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
-		return true
-	}
-	
-	// 超时错误
+
+	// 超时错误（这是最常见的临时错误类型）
 	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 		return true
 	}
-	
-	// Context 错误不重试
+
+	// 检查是否是特定的临时网络错误类型
+	var dnsError *net.DNSError
+	if errors.As(err, &dnsError) && dnsError.Temporary() {
+		return true
+	}
+
+	// Context 取消和超时不重试（这些不是临时错误）
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	
+
+	// 对于其他网络错误，保守地认为是临时的（但不包括连接拒绝等明确错误）
+	if netErr, ok := err.(net.Error); ok {
+		// 检查是否是连接被拒绝（这通常不是临时错误）
+		var opErr *net.OpError
+		if errors.As(err, &opErr) {
+			if errno, ok := opErr.Err.(*net.OpError).Err.(interface{ Errno() int }); ok {
+				// ECONNREFUSED 通常不是临时错误
+				if errno.Errno() == 111 { // Linux/macOS connection refused
+					return false
+				}
+			}
+		}
+		return true
+	}
+
 	return false
 }

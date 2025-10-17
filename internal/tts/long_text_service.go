@@ -198,13 +198,12 @@ func (s *LongTextTTSService) synthesizeLongText(ctx context.Context, req models.
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge audio segments: %w", err)
 	}
-	
+
 	// 清理音频片段,释放内存
 	for i := range audioSegments {
 		audioSegments[i] = nil
 	}
-	audioSegments = nil
-	
+
 	mergeDuration := time.Since(mergeStart)
 	totalDuration := time.Since(startTime)
 	
