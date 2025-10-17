@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -60,6 +61,31 @@ func NewClient(cfg *config.Config) *Client {
 	if err != nil {
 		logrus.Fatalf("创建SSML处理器失败: %v", err)
 	}
+	
+	// 配置优化的 HTTP Transport
+	transport := &http.Transport{
+		// 连接池配置
+		MaxIdleConns:        100,              // 最大空闲连接数
+		MaxIdleConnsPerHost: 20,               // 每个 host 的最大空闲连接数
+		MaxConnsPerHost:     50,               // 每个 host 的最大连接数
+		IdleConnTimeout:     90 * time.Second, // 空闲连接超时
+		
+		// 超时配置
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,  // 连接超时
+			KeepAlive: 30 * time.Second, // TCP keep-alive
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second, // TLS 握手超时
+		ResponseHeaderTimeout: 10 * time.Second, // 响应头超时
+		ExpectContinueTimeout: 1 * time.Second,
+		
+		// 启用 HTTP/2
+		ForceAttemptHTTP2: true,
+		
+		// 禁用压缩(音频数据已压缩)
+		DisableCompression: true,
+	}
+	
 	client := &Client{
 		defaultVoice:  cfg.TTS.DefaultVoice,
 		defaultRate:   cfg.TTS.DefaultRate,
@@ -67,7 +93,8 @@ func NewClient(cfg *config.Config) *Client {
 		defaultFormat: cfg.TTS.DefaultFormat,
 		maxTextLength: cfg.TTS.MaxTextLength,
 		httpClient: &http.Client{
-			Timeout: time.Duration(cfg.TTS.RequestTimeout) * time.Second,
+			Timeout:   time.Duration(cfg.TTS.RequestTimeout) * time.Second,
+			Transport: transport,
 		},
 		voicesCacheExpiry: time.Time{}, // 初始时缓存为空
 		endpointExpiry:    time.Time{}, // 初始时端点为空
@@ -308,11 +335,25 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 	httpReq.Header.Set("X-Microsoft-OutputFormat", c.defaultFormat)
 	httpReq.Header.Set("User-Agent", userAgent)
 
-	// 发送请求
-	resp, err := c.httpClient.Do(httpReq)
-
-	if err != nil {
-		return nil, err
+	// 发送请求(带重试)
+	var resp *http.Response
+	maxRetries := 3
+	for i := 0; i < maxRetries; i++ {
+		resp, err = c.httpClient.Do(httpReq)
+		
+		if err != nil {
+			// 检查是否是临时错误
+			if isTemporaryError(err) && i < maxRetries-1 {
+				waitTime := time.Duration(i+1) * 500 * time.Millisecond
+				logrus.Warnf("Request failed (attempt %d/%d), retrying in %v: %v", i+1, maxRetries, waitTime, err)
+				time.Sleep(waitTime)
+				continue
+			}
+			return nil, fmt.Errorf("request failed after %d attempts: %w", i+1, err)
+		}
+		
+		// 成功或非临时错误,跳出重试循环
+		break
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -327,4 +368,28 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 	}
 
 	return resp, nil
+}
+
+// isTemporaryError 判断是否是临时错误(可以重试)
+func isTemporaryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	// 网络临时错误
+	if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
+		return true
+	}
+	
+	// 超时错误
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return true
+	}
+	
+	// Context 错误不重试
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	
+	return false
 }

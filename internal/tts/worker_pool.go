@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -37,6 +38,7 @@ type WorkerPool struct {
 	ctx         context.Context        // 上下文
 	cancel      context.CancelFunc     // 取消函数
 	metrics     *PoolMetrics           // 性能指标
+	closed      int32                  // 关闭状态标志(原子操作)
 }
 
 // PoolMetrics 工作池性能指标
@@ -45,7 +47,7 @@ type PoolMetrics struct {
 	CompletedJobs  int64
 	FailedJobs     int64
 	ActiveWorkers  int
-	AverageLatency time.Duration
+	TotalLatency   int64 // 总延迟(纳秒)
 	mu             sync.RWMutex
 }
 
@@ -54,13 +56,17 @@ func NewWorkerPool(workers int, client *microsoft.Client) *WorkerPool {
 	if workers <= 0 {
 		workers = 5 // 默认 5 个 worker
 	}
+	if workers > 50 {
+		workers = 50 // 最大限制 50 个 worker
+	}
 	
 	return &WorkerPool{
 		workers:  workers,
 		jobs:     make(chan *SegmentJob, workers*2), // 缓冲区为 worker 数量的 2 倍
-		results:  make(chan *SegmentResult, workers),
+		results:  make(chan *SegmentResult, workers*2), // 增大结果缓冲区
 		client:   client,
 		metrics:  &PoolMetrics{},
+		closed:   0,
 	}
 }
 
@@ -141,12 +147,13 @@ func (p *WorkerPool) processJob(job *SegmentJob, workerID int) *SegmentResult {
 	result.AudioData = resp.AudioContent
 	result.Duration = time.Since(startTime)
 	
-	// 更新完成指标
+	// 更新完成指标和延迟统计
 	p.metrics.mu.Lock()
 	p.metrics.CompletedJobs++
+	p.metrics.TotalLatency += result.Duration.Nanoseconds()
 	p.metrics.mu.Unlock()
 	
-	logrus.Debugf("Worker %d completed job %s in %v (%d bytes)", 
+	logrus.Debugf("Worker %d completed job %s in %v (%d bytes)",
 		workerID, job.ID, result.Duration, len(result.AudioData))
 	
 	return result
@@ -154,6 +161,11 @@ func (p *WorkerPool) processJob(job *SegmentJob, workerID int) *SegmentResult {
 
 // Submit 提交任务到工作池
 func (p *WorkerPool) Submit(job *SegmentJob) error {
+	// 检查是否已关闭
+	if atomic.LoadInt32(&p.closed) == 1 {
+		return fmt.Errorf("worker pool is closed")
+	}
+	
 	// 更新提交指标
 	p.metrics.mu.Lock()
 	p.metrics.TotalJobs++
@@ -163,9 +175,17 @@ func (p *WorkerPool) Submit(job *SegmentJob) error {
 	case p.jobs <- job:
 		return nil
 	case <-p.ctx.Done():
-		return fmt.Errorf("worker pool closed")
+		return fmt.Errorf("worker pool context cancelled: %w", p.ctx.Err())
 	default:
-		return fmt.Errorf("job queue full (capacity: %d)", cap(p.jobs))
+		// 队列满时记录警告
+		logrus.Warnf("Job queue is full (capacity: %d), blocking submission", cap(p.jobs))
+		// 阻塞等待直到可以提交或上下文取消
+		select {
+		case p.jobs <- job:
+			return nil
+		case <-p.ctx.Done():
+			return fmt.Errorf("worker pool context cancelled while waiting: %w", p.ctx.Err())
+		}
 	}
 }
 
@@ -176,21 +196,38 @@ func (p *WorkerPool) Results() <-chan *SegmentResult {
 
 // Close 关闭工作池
 func (p *WorkerPool) Close() {
+	// 使用原子操作标记已关闭
+	if !atomic.CompareAndSwapInt32(&p.closed, 0, 1) {
+		logrus.Warn("Worker pool already closed")
+		return
+	}
+	
 	logrus.Info("Closing worker pool...")
+	
+	// 先取消上下文,通知所有 worker 停止
+	if p.cancel != nil {
+		p.cancel()
+	}
 	
 	// 关闭任务通道
 	close(p.jobs)
 	
-	// 等待所有 worker 完成
-	p.wg.Wait()
+	// 等待所有 worker 完成(带超时)
+	done := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(done)
+	}()
+	
+	select {
+	case <-done:
+		logrus.Info("All workers stopped gracefully")
+	case <-time.After(10 * time.Second):
+		logrus.Warn("Timeout waiting for workers to stop")
+	}
 	
 	// 关闭结果通道
 	close(p.results)
-	
-	// 取消上下文
-	if p.cancel != nil {
-		p.cancel()
-	}
 	
 	// 更新活跃 worker 数
 	p.metrics.mu.Lock()
@@ -210,6 +247,7 @@ func (p *WorkerPool) GetMetrics() PoolMetrics {
 		CompletedJobs: p.metrics.CompletedJobs,
 		FailedJobs:    p.metrics.FailedJobs,
 		ActiveWorkers: p.metrics.ActiveWorkers,
+		TotalLatency:  p.metrics.TotalLatency,
 	}
 }
 
@@ -307,4 +345,15 @@ func (p *WorkerPool) Stats() PoolStats {
 		QueueLength:   len(p.jobs),
 		SuccessRate:   successRate,
 	}
+}
+
+// GetAverageLatency 获取平均延迟
+func (p *WorkerPool) GetAverageLatency() time.Duration {
+	p.metrics.mu.RLock()
+	defer p.metrics.mu.RUnlock()
+	
+	if p.metrics.CompletedJobs == 0 {
+		return 0
+	}
+	return time.Duration(p.metrics.TotalLatency / p.metrics.CompletedJobs)
 }

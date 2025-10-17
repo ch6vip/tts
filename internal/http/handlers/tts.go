@@ -15,6 +15,7 @@ import (
 	
 	"tts/internal/config"
 	custom_errors "tts/internal/errors"
+	"tts/internal/metrics"
 	"tts/internal/models"
 	"tts/internal/tts"
 	"tts/internal/utils"
@@ -170,9 +171,19 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 	synthStart := time.Now()
 	resp, err := h.ttsService.SynthesizeSpeech(c.Request.Context(), req)
 	synthTime := time.Since(synthStart)
+	
+	// 记录指标
+	metrics.GlobalMetrics.RecordTTSRequest(synthTime, err)
+	if resp != nil && resp.CacheHit {
+		metrics.GlobalMetrics.RecordCacheHit(int64(len(resp.AudioContent)))
+	} else if err == nil {
+		metrics.GlobalMetrics.RecordCacheMiss()
+	}
+	
 	logger.WithFields(logrus.Fields{
 		"duration":    synthTime,
 		"text_length": reqTextLength,
+		"cache_hit":   resp != nil && resp.CacheHit,
 	}).Info("TTS合成耗时")
 
 	if err != nil {

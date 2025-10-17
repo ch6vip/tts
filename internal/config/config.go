@@ -79,14 +79,14 @@ type LongTextConfig struct {
 }
 
 var (
-	config Config
-	once   sync.Once
+	config     Config
+	configOnce sync.Once
+	loadErr    error
 )
 
 // Load 从指定路径加载配置文件
 func Load(configPath string) (*Config, error) {
-	var err error
-	once.Do(func() {
+	configOnce.Do(func() {
 		v := viper.New()
 
 		// 配置 Viper
@@ -98,27 +98,169 @@ func Load(configPath string) (*Config, error) {
 		// 从配置文件加载
 		if configPath != "" {
 			v.SetConfigFile(configPath)
-			if err = v.ReadInConfig(); err != nil {
-				err = fmt.Errorf("加载配置文件失败: %w", err)
+			if loadErr = v.ReadInConfig(); loadErr != nil {
+				loadErr = fmt.Errorf("加载配置文件失败: %w", loadErr)
 				return
 			}
 		}
 
 		// 将配置绑定到结构体
-		if err = v.Unmarshal(&config); err != nil {
-			err = fmt.Errorf("解析配置失败: %w", err)
+		if loadErr = v.Unmarshal(&config); loadErr != nil {
+			loadErr = fmt.Errorf("解析配置失败: %w", loadErr)
 			return
 		}
 
+		// 设置默认值
+		setDefaults(&config)
+
+		// 验证配置
+		if loadErr = validate(&config); loadErr != nil {
+			loadErr = fmt.Errorf("配置验证失败: %w", loadErr)
+			return
+		}
 	})
 
-	if err != nil {
-		return nil, err
+	if loadErr != nil {
+		return nil, loadErr
 	}
 
 	return &config, nil
 }
 
+// setDefaults 设置配置默认值
+func setDefaults(cfg *Config) {
+	// Server 默认值
+	if cfg.Server.Port == 0 {
+		cfg.Server.Port = 8080
+	}
+	if cfg.Server.ReadTimeout == 0 {
+		cfg.Server.ReadTimeout = 60
+	}
+	if cfg.Server.WriteTimeout == 0 {
+		cfg.Server.WriteTimeout = 60
+	}
+
+	// TTS 默认值
+	if cfg.TTS.DefaultVoice == "" {
+		cfg.TTS.DefaultVoice = "zh-CN-XiaoxiaoNeural"
+	}
+	if cfg.TTS.DefaultRate == "" {
+		cfg.TTS.DefaultRate = "0"
+	}
+	if cfg.TTS.DefaultPitch == "" {
+		cfg.TTS.DefaultPitch = "0"
+	}
+	if cfg.TTS.DefaultFormat == "" {
+		cfg.TTS.DefaultFormat = "audio-24khz-48kbitrate-mono-mp3"
+	}
+	if cfg.TTS.MaxTextLength == 0 {
+		cfg.TTS.MaxTextLength = 65535
+	}
+	if cfg.TTS.RequestTimeout == 0 {
+		cfg.TTS.RequestTimeout = 30
+	}
+	if cfg.TTS.MaxConcurrent == 0 {
+		cfg.TTS.MaxConcurrent = 20
+	}
+
+	// 长文本处理默认值
+	if cfg.TTS.LongText.MaxSegmentLength == 0 {
+		cfg.TTS.LongText.MaxSegmentLength = 500
+	}
+	if cfg.TTS.LongText.WorkerCount == 0 {
+		cfg.TTS.LongText.WorkerCount = 5
+	}
+	if cfg.TTS.LongText.MinTextForSplit == 0 {
+		cfg.TTS.LongText.MinTextForSplit = 1000
+	}
+
+	// 日志默认值
+	if cfg.Log.Level == "" {
+		cfg.Log.Level = "info"
+	}
+	if cfg.Log.Format == "" {
+		cfg.Log.Format = "text"
+	}
+
+	// 缓存默认值
+	if cfg.Cache.ExpirationMinutes == 0 {
+		cfg.Cache.ExpirationMinutes = 1440
+	}
+	if cfg.Cache.CleanupIntervalMinutes == 0 {
+		cfg.Cache.CleanupIntervalMinutes = 1440
+	}
+}
+
+// validate 验证配置
+func validate(cfg *Config) error {
+	// Server 验证
+	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
+		return fmt.Errorf("无效的服务器端口: %d", cfg.Server.Port)
+	}
+	if cfg.Server.ReadTimeout < 0 || cfg.Server.WriteTimeout < 0 {
+		return fmt.Errorf("超时配置不能为负数")
+	}
+
+	// TTS 验证
+	if cfg.TTS.MaxTextLength < 1 {
+		return fmt.Errorf("max_text_length 必须大于 0")
+	}
+	if cfg.TTS.RequestTimeout < 1 {
+		return fmt.Errorf("request_timeout 必须大于 0")
+	}
+	if cfg.TTS.MaxConcurrent < 1 {
+		return fmt.Errorf("max_concurrent 必须大于 0")
+	}
+	if cfg.TTS.MaxConcurrent > 100 {
+		return fmt.Errorf("max_concurrent 不能超过 100")
+	}
+
+	// 长文本处理验证
+	if cfg.TTS.LongText.Enabled {
+		if cfg.TTS.LongText.MaxSegmentLength < 100 {
+			return fmt.Errorf("max_segment_length 不能小于 100")
+		}
+		if cfg.TTS.LongText.WorkerCount < 1 {
+			return fmt.Errorf("worker_count 必须大于 0")
+		}
+		if cfg.TTS.LongText.WorkerCount > 50 {
+			return fmt.Errorf("worker_count 不能超过 50")
+		}
+		if cfg.TTS.LongText.MinTextForSplit < cfg.TTS.LongText.MaxSegmentLength {
+			return fmt.Errorf("min_text_for_split 应大于等于 max_segment_length")
+		}
+	}
+
+	// 日志级别验证
+	validLogLevels := []string{"trace", "debug", "info", "warn", "error", "fatal", "panic"}
+	levelValid := false
+	for _, level := range validLogLevels {
+		if cfg.Log.Level == level {
+			levelValid = true
+			break
+		}
+	}
+	if !levelValid {
+		return fmt.Errorf("无效的日志级别: %s", cfg.Log.Level)
+	}
+
+	// 日志格式验证
+	if cfg.Log.Format != "text" && cfg.Log.Format != "json" {
+		return fmt.Errorf("无效的日志格式: %s (支持: text, json)", cfg.Log.Format)
+	}
+
+	// 缓存验证
+	if cfg.Cache.Enabled {
+		if cfg.Cache.ExpirationMinutes < 1 {
+			return fmt.Errorf("expiration_minutes 必须大于 0")
+		}
+		if cfg.Cache.CleanupIntervalMinutes < 1 {
+			return fmt.Errorf("cleanup_interval_minutes 必须大于 0")
+		}
+	}
+
+	return nil
+}
 
 // Get 返回已加载的配置
 func Get() *Config {

@@ -49,6 +49,7 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 	// 创建处理器
 	ttsHandler := handlers.NewTTSHandler(ttsService, longTextService, cfg)
 	voicesHandler := handlers.NewVoicesHandler(ttsService)
+	metricsHandler := handlers.NewMetricsHandler()
 
 	// 创建页面处理器
 	pagesHandler, err := handlers.NewPagesHandler(cfg)
@@ -97,6 +98,11 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 	openAIHandler := middleware.OpenAIAuth(cfg.OpenAI.ApiKey)
 	baseRouter.POST("/v1/audio/speech", openAIHandler, ttsHandler.HandleOpenAITTS)
 	baseRouter.POST("/audio/speech", openAIHandler, ttsHandler.HandleOpenAITTS)
+
+	// 设置性能监控和健康检查路由
+	baseRouter.GET("/metrics", metricsHandler.GetMetrics)
+	baseRouter.POST("/metrics/reset", metricsHandler.ResetMetrics)
+	baseRouter.GET("/health", metricsHandler.HealthCheck)
 
 	return router, nil
 }

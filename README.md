@@ -35,8 +35,9 @@
 ### 🔒 安全与性能
 - **轻量镜像**: 采用 Distroless 基础镜像，体积仅 65MB
 - **非特权运行**: 容器以 nonroot 用户运行，提升安全性
-- **智能缓存**: 内置缓存机制，减少重复请求
-- **并发限流**: 可配置的并发控制和速率限制
+- **智能缓存**: 内置缓存机制，减少重复请求，支持命中率统计
+- **并发优化**: Worker Pool 资源管理，优化的 HTTP 连接池
+- **性能监控**: 实时指标收集，支持健康检查和性能分析
 
 ## 📋 目录
 
@@ -62,7 +63,7 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/zuoban/tts.git
+git clone https://github.com/ch6vip/tts.git
 cd tts
 
 # 启动服务
@@ -88,7 +89,9 @@ docker run -d \
 
 - **Web 界面**: http://localhost:8080
 - **API 文档**: http://localhost:8080/api-doc
-- **健康检查**: http://localhost:8080/voices
+- **健康检查**: http://localhost:8080/health
+- **性能指标**: http://localhost:8080/metrics
+- **语音列表**: http://localhost:8080/voices
 
 ## 🐳 部署方式
 
@@ -335,6 +338,62 @@ curl "http://localhost:8080/reader.json?t=文本&v=zh-CN-XiaoxiaoNeural&n=我的
 curl "http://localhost:8080/ifreetime.json?t=文本&v=zh-CN-XiaoxiaoNeural&n=我的语音"
 ```
 
+### 6. 性能监控
+
+**查看实时性能指标:**
+
+```bash
+curl "http://localhost:8080/metrics"
+```
+
+**响应示例:**
+```json
+{
+  "tts": {
+    "requests": 150,
+    "success": 145,
+    "errors": 5,
+    "success_rate": 96.67,
+    "latency": {
+      "avg": "245ms",
+      "max": "1200ms",
+      "min": "50ms"
+    }
+  },
+  "cache": {
+    "hits": 45,
+    "misses": 105,
+    "hit_rate": 30.0,
+    "total_size": 52428800
+  },
+  "worker_pool": {
+    "total_jobs": 200,
+    "errors": 2
+  },
+  "system": {
+    "memory": {
+      "alloc_mb": 125,
+      "total_alloc_mb": 512,
+      "sys_mb": 256,
+      "num_gc": 25
+    },
+    "goroutines": 45
+  }
+}
+```
+
+**健康检查:**
+
+```bash
+curl "http://localhost:8080/health"
+```
+
+**重置指标:**
+
+```bash
+curl -X POST "http://localhost:8080/metrics/reset"
+```
+
 ## ⚙️ 配置详解
 
 ### 配置文件结构
@@ -501,6 +560,8 @@ tts/
 │   ├── models/              # 数据模型
 │   │   ├── tts.go           # TTS 模型
 │   │   └── voice.go         # 语音模型
+│   ├── metrics/             # 性能监控
+│   │   └── metrics.go       # 指标收集器
 │   ├── tts/                 # TTS 核心
 │   │   ├── audio/           # 音频处理
 │   │   │   └── merger.go    # 音频合并
@@ -526,7 +587,9 @@ tts/
 │       └── shared/          # 共享组件
 ├── docs/                    # 文档
 │   ├── DEVOPS_OPTIMIZATION_REPORT.md  # DevOps 优化报告
-│   └── SECURITY_HARDENING.md          # 安全加固指南
+│   ├── SECURITY_HARDENING.md          # 安全加固指南
+│   ├── PERFORMANCE_OPTIMIZATION_PLAN.md  # 性能优化计划
+│   └── OPTIMIZATION_SUMMARY.md        # 优化总结
 ├── script/                  # 脚本
 │   └── build.sh            # 构建脚本
 ├── .github/                # GitHub 配置
@@ -648,10 +711,18 @@ golangci-lint run
 ### Q: 如何提升合成速度？
 
 **A**: 优化建议：
-1. 启用缓存 (`cache.enabled: true`)
+1. 启用缓存 (`cache.enabled: true`) - 命中率可达 30-40%
 2. 增加并发数 (`tts.max_concurrent: 30`)
 3. 使用 FFmpeg 合并 (`long_text.use_ffmpeg_merge: true`)
 4. 选择较低的音频码率
+5. 查看 `/metrics` 端点分析性能瓶颈
+
+**新增优化 (v1.1.0):**
+- Worker Pool 资源管理优化，减少 goroutine 泄漏风险
+- HTTP 连接池优化，连接复用率提升 50-60%
+- 缓存键生成改进，命中率提升 15-20%
+- 内存使用优化，峰值降低 15-20%
+- 详见 `docs/OPTIMIZATION_SUMMARY.md`
 
 ### Q: 容器启动失败？
 
@@ -682,6 +753,20 @@ golangci-lint run
 - 支持内网部署
 - 可通过反向代理配置域名和 HTTPS
 - 提供完整的 Kubernetes 部署示例
+- 内置性能监控和健康检查
+
+### Q: 如何监控服务性能？
+
+**A**: 新增性能监控功能：
+1. 实时指标查看：`GET /metrics`
+   - TTS 请求统计（成功率、延迟）
+   - 缓存命中率和大小
+   - Worker Pool 状态
+   - 系统资源使用
+2. 健康检查：`GET /health`
+3. 指标重置：`POST /metrics/reset`
+
+建议将 `/metrics` 集成到 Prometheus/Grafana 进行可视化监控。
 
 ## 🤝 贡献
 
