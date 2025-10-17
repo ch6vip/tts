@@ -393,11 +393,11 @@ func isTemporaryError(err error) bool {
 	}
 
 	// 对于其他网络错误，保守地认为是临时的（但不包括连接拒绝等明确错误）
-	if netErr, ok := err.(net.Error); ok {
+	if _, ok := err.(net.Error); ok {
 		// 检查是否是连接被拒绝（这通常不是临时错误）
 		var opErr *net.OpError
 		if errors.As(err, &opErr) {
-			if errno, ok := opErr.Err.(*net.OpError).Err.(interface{ Errno() int }); ok {
+			if errno, ok := opErr.Err.(interface{ Errno() int }); ok {
 				// ECONNREFUSED 通常不是临时错误
 				if errno.Errno() == 111 { // Linux/macOS connection refused
 					return false
