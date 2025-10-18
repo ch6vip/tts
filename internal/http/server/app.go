@@ -16,8 +16,9 @@ import (
 
 // App 表示整个TTS应用程序
 type App struct {
-	server *Server
-	cfg    *config.Config
+	server     *Server
+	cfg        *config.Config
+	ttsService tts.Service
 }
 
 // NewApp 创建一个新的应用程序实例
@@ -48,8 +49,9 @@ func NewApp(cfg *config.Config) (*App, error) {
 	server := New(cfg, router)
 
 	return &App{
-		server: server,
-		cfg:    cfg,
+		server:     server,
+		cfg:        cfg,
+		ttsService: ttsService,
 	}, nil
 }
 
@@ -79,7 +81,13 @@ func (a *App) Start() error {
 
 		// 尝试优雅关闭服务器
 		if err := a.server.Shutdown(ctx); err != nil {
-			return fmt.Errorf("服务器关闭出错: %w", err)
+			logrus.Errorf("服务器关闭出错: %v", err)
+		}
+
+		// 关闭 TTS 服务（例如，关闭 worker pool）
+		if closer, ok := a.ttsService.(interface{ Close() }); ok {
+			logrus.Info("正在关闭 TTS 服务...")
+			closer.Close()
 		}
 
 		logrus.Info("服务器已优雅关闭")

@@ -342,6 +342,11 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 		resp, err = c.httpClient.Do(httpReq)
 		
 		if err != nil {
+			// 如果在出错时收到了响应，确保关闭其 Body 以防止资源泄露
+			if resp != nil && resp.Body != nil {
+				resp.Body.Close()
+			}
+
 			// 检查是否是临时错误
 			if isTemporaryError(err) && i < maxRetries-1 {
 				waitTime := time.Duration(i+1) * 500 * time.Millisecond

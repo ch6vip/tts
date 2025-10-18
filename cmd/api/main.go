@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -33,31 +34,60 @@ func initLog(logConfig *config.LogConfig) {
 	logrus.SetOutput(os.Stdout)
 }
 
+// findProjectRoot 向上遍历目录以查找 go.mod 文件，从而确定项目根目录。
+func findProjectRoot() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		goModPath := filepath.Join(cwd, "go.mod")
+		if _, err := os.Stat(goModPath); err == nil {
+			return cwd, nil
+		}
+
+		parent := filepath.Dir(cwd)
+		if parent == cwd {
+			// 到达文件系统根目录
+			return "", fmt.Errorf("在任何父目录中都未找到 go.mod")
+		}
+		cwd = parent
+	}
+}
+
 func main() {
 	// 解析命令行参数
 	configPath := flag.String("config", "", "配置文件路径")
 	flag.Parse()
 
-	// 如果没有指定配置文件，尝试默认位置
+	// 如果没有通过 -config 参数指定配置文件，则自动查找
 	if *configPath == "" {
-		// 尝试多个位置查找配置文件
-		possiblePaths := []string{
-			"./configs/config.yaml",
-			"../configs/config.yaml",
-			"/etc/tts/config.yaml",
-		}
+		var foundPath string
 
-		for _, path := range possiblePaths {
+		// 1. 尝试从项目根目录查找
+		if root, err := findProjectRoot(); err == nil {
+			path := filepath.Join(root, "configs", "config.yaml")
 			if _, err := os.Stat(path); err == nil {
-				*configPath = path
-				break
+				foundPath = path
+				logrus.Debugf("在项目根目录找到配置文件: %s", path)
 			}
 		}
 
-		// 如果还是没找到，使用默认位置
-		if *configPath == "" {
-			*configPath = "./configs/config.yaml"
+		// 2. 如果在项目根目录找不到，则检查系统范围的路径
+		if foundPath == "" {
+			path := "/etc/tts/config.yaml"
+			if _, err := os.Stat(path); err == nil {
+				foundPath = path
+				logrus.Debugf("在系统路径找到配置文件: %s", path)
+			}
 		}
+
+		// 3. 如果仍然找不到，则终止程序
+		if foundPath == "" {
+			logrus.Fatalf("未找到配置文件。请使用 -config 参数指定路径，或确保 'configs/config.yaml' 位于项目根目录，或 '/etc/tts/config.yaml' 存在。")
+		}
+		*configPath = foundPath
 	}
 
 	// 确保配置文件路径是绝对路径
@@ -66,7 +96,6 @@ func main() {
 		logrus.Fatalf("无法获取配置文件的绝对路径: %v", err)
 	}
 
-	// 打印使用的配置文件路径
 	// 加载配置
 	cfg, err := config.Load(absConfigPath)
 	if err != nil {

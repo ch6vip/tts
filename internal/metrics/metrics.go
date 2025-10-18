@@ -158,9 +158,9 @@ func (m *Metrics) Reset() {
 	atomic.StoreInt64(&m.CacheTotalSize, 0)
 	atomic.StoreInt64(&m.WorkerPoolJobs, 0)
 	atomic.StoreInt64(&m.WorkerPoolErrors, 0)
-	
+
 	m.mu.Lock()
 	m.TTSMaxLatency = 0
-	m.TTSMinLatency = 1<<63 - 1
+	m.TTSMinLatency = 1<<63 - 1 // 重置为 int64 最大值
 	m.mu.Unlock()
 }

@@ -57,8 +57,9 @@ func NewLongTextTTSService(client *microsoft.Client, config LongTextConfig) *Lon
 	// 创建音频合并器
 	merger := audio.NewFFmpegMerger(config.FFmpegPath)
 
-	// 创建工作池
+	// 创建并启动工作池
 	pool := NewWorkerPool(config.WorkerCount, client)
+	pool.Start()
 
 	return &LongTextTTSService{
 		client:          client,
@@ -106,11 +107,7 @@ func (s *LongTextTTSService) synthesizeLongText(ctx context.Context, req models.
 		return s.client.SynthesizeSpeech(ctx, req)
 	}
 
-	// 2. 启动工作池
-	s.workerPool.Start(ctx)
-	defer s.workerPool.Close()
-
-	// 3. 提交所有任务
+	// 2. 提交所有任务
 	submitStart := time.Now()
 	jobID := fmt.Sprintf("job_%d", time.Now().UnixNano())
 	
@@ -121,8 +118,9 @@ func (s *LongTextTTSService) synthesizeLongText(ctx context.Context, req models.
 		}
 		
 		job := &SegmentJob{
-			ID:    fmt.Sprintf("%s_seg_%d", jobID, idx),
-			Index: idx,
+			ID:      fmt.Sprintf("%s_seg_%d", jobID, idx),
+			Index:   idx,
+			Context: ctx, // 传递请求上下文
 			Request: models.TTSRequest{
 				Text:  segment,
 				Voice: req.Voice,

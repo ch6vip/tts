@@ -17,6 +17,7 @@ type SegmentJob struct {
 	ID      string              // 任务 ID
 	Index   int                 // 片段索引（用于保持顺序）
 	Request models.TTSRequest   // TTS 请求
+	Context context.Context     // 请求上下文
 }
 
 // SegmentResult 表示分段合成结果
@@ -71,9 +72,10 @@ func NewWorkerPool(workers int, client *microsoft.Client) *WorkerPool {
 }
 
 // Start 启动工作池
-func (p *WorkerPool) Start(ctx context.Context) {
-	p.ctx, p.cancel = context.WithCancel(ctx)
-	
+func (p *WorkerPool) Start() {
+	// 使用后台 context 创建一个可取消的 context,用于控制整个池的生命周期
+	p.ctx, p.cancel = context.WithCancel(context.Background())
+
 	logrus.Infof("Starting worker pool with %d workers", p.workers)
 	
 	// 启动 worker goroutines
@@ -122,25 +124,35 @@ func (p *WorkerPool) worker(id int) {
 // processJob 处理单个任务
 func (p *WorkerPool) processJob(job *SegmentJob, workerID int) *SegmentResult {
 	startTime := time.Now()
-	
+
 	result := &SegmentResult{
 		ID:    job.ID,
 		Index: job.Index,
 	}
-	
+
 	logrus.Debugf("Worker %d processing job %s (index: %d)", workerID, job.ID, job.Index)
-	
-	// 执行 TTS 合成
-	resp, err := p.client.SynthesizeSpeech(p.ctx, job.Request)
+
+	// 检查 job context 是否已经取消
+	if job.Context.Err() != nil {
+		result.Error = fmt.Errorf("job context cancelled before processing segment %d: %w", job.Index, job.Context.Err())
+		logrus.Warnf("%v", result.Error)
+		p.metrics.mu.Lock()
+		p.metrics.FailedJobs++
+		p.metrics.mu.Unlock()
+		return result
+	}
+
+	// 执行 TTS 合成, 使用 job 自己的 context
+	resp, err := p.client.SynthesizeSpeech(job.Context, job.Request)
 	if err != nil {
 		result.Error = fmt.Errorf("worker %d failed to synthesize segment %d: %w", workerID, job.Index, err)
 		logrus.Errorf("%v", result.Error)
-		
+
 		// 更新失败指标
 		p.metrics.mu.Lock()
 		p.metrics.FailedJobs++
 		p.metrics.mu.Unlock()
-		
+
 		return result
 	}
 	
@@ -165,26 +177,35 @@ func (p *WorkerPool) Submit(job *SegmentJob) error {
 	if atomic.LoadInt32(&p.closed) == 1 {
 		return fmt.Errorf("worker pool is closed")
 	}
-	
+
+	// 检查 job 的 context 是否已经取消
+	if job.Context.Err() != nil {
+		return fmt.Errorf("job context cancelled before submission: %w", job.Context.Err())
+	}
+
 	// 更新提交指标
 	p.metrics.mu.Lock()
 	p.metrics.TotalJobs++
 	p.metrics.mu.Unlock()
-	
+
+	// 尝试非阻塞提交
 	select {
 	case p.jobs <- job:
 		return nil
-	case <-p.ctx.Done():
+	case <-p.ctx.Done(): // 检查池是否已关闭
 		return fmt.Errorf("worker pool context cancelled: %w", p.ctx.Err())
+	case <-job.Context.Done(): // 检查请求是否已取消
+		return fmt.Errorf("job context cancelled during submission: %w", job.Context.Err())
 	default:
-		// 队列满时记录警告
+		// 队列满时记录警告并阻塞等待
 		logrus.Warnf("Job queue is full (capacity: %d), blocking submission", cap(p.jobs))
-		// 阻塞等待直到可以提交或上下文取消
 		select {
 		case p.jobs <- job:
 			return nil
-		case <-p.ctx.Done():
+		case <-p.ctx.Done(): // 检查池是否已关闭
 			return fmt.Errorf("worker pool context cancelled while waiting: %w", p.ctx.Err())
+		case <-job.Context.Done(): // 检查请求是否已取消
+			return fmt.Errorf("job context cancelled while waiting for submission: %w", job.Context.Err())
 		}
 	}
 }
