@@ -14,8 +14,6 @@ document.addEventListener('DOMContentLoaded', function () {
         rateValue: document.getElementById('rateValue'),
         pitchInput: document.getElementById('pitch'),
         pitchValue: document.getElementById('pitchValue'),
-        apiKeyInput: document.getElementById('api-key'),
-        apiKeyGroup: document.getElementById('api-key-group'),
         speakButton: document.getElementById('speak'),
         downloadButton: document.getElementById('download'),
         copyLinkButton: document.getElementById('copyLink'),
@@ -24,17 +22,16 @@ document.addEventListener('DOMContentLoaded', function () {
         audioPlayer: document.getElementById('audioPlayer'),
         resultSection: document.getElementById('resultSection'),
         charCount: document.getElementById('charCount'),
-        togglePasswordButton: document.getElementById('toggle-password'),
         toggleInputModeBtn: document.getElementById('toggleInputMode'),
         ssmlHelp: document.getElementById('ssmlHelp'),
-        saveApiKeyBtn: document.getElementById('save-api-key-btn'),
+        metricsContainer: document.getElementById('metrics-container'),
     };
 
     // 初始化
     initEventListeners(elements);
     initVoicesList(elements);
-    loadApiKeyFromLocalStorage(elements);
     loadFormData(elements);
+    initMetrics(elements);
 });
 
 // 设置按钮加载状态
@@ -66,7 +63,7 @@ function initEventListeners(elements) {
     const {
         speakButton, textInput, ssmlInput, rateInput, pitchInput, voiceSelect, styleSelect,
         toggleInputModeBtn, downloadButton, copyLinkButton, copyHttpTtsLinkButton,
-        copyIfreetimeLinkButton, apiKeyInput, togglePasswordButton
+        copyIfreetimeLinkButton
     } = elements;
 
     if (speakButton) {
@@ -154,11 +151,9 @@ function initEventListeners(elements) {
             const style = styleSelect.value;
             const rate = "{{speakSpeed*4}}"
             const pitch = pitchInput.value;
-            const apiKey = apiKeyInput.value.trim();
 
             let httpTtsLink = `${window.location.origin}${config.basePath}/reader.json?&v=${voice}&r=${rate}&p=${pitch}&n=${displayName}`;
             if (style) httpTtsLink += `&s=${style}`;
-            if (apiKey) httpTtsLink += `&api_key=${apiKey}`;
             window.open(httpTtsLink, '_blank');
         });
     }
@@ -170,44 +165,19 @@ function initEventListeners(elements) {
             const style = styleSelect.value;
             const rate = rateInput.value;
             const pitch = pitchInput.value;
-            const apiKey = apiKeyInput.value.trim();
-
             let ifreetimeLink = `${window.location.origin}${config.basePath}/ifreetime.json?&v=${voice}&r=${rate}&p=${pitch}&n=${displayName}`;
             if (style) ifreetimeLink += `&s=${style}`;
-            if (apiKey) ifreetimeLink += `&api_key=${apiKey}`;
             window.open(ifreetimeLink, '_blank');
         });
     }
 
-    if (togglePasswordButton) {
-        togglePasswordButton.addEventListener('click', function () {
-            const type = apiKeyInput.getAttribute('type') === 'password' ? 'text' : 'password';
-            apiKeyInput.setAttribute('type', type);
-            this.innerHTML = type === 'password'
-                ? `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z" /><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" /></svg>`
-                : `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" /></svg>`;
-        });
-    }
-
-    if (apiKeyInput) {
-        apiKeyInput.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') {
-                event.preventDefault();
-                saveApiKey();
-            }
-        });
-    }
-
-    if (elements.saveApiKeyBtn) {
-        elements.saveApiKeyBtn.addEventListener('click', saveApiKey);
-    }
 }
 
 // 生成语音核心函数
 async function generateSpeech(elements) {
     const {
         textInput, ssmlInput, voiceSelect, styleSelect, rateInput, pitchInput,
-        apiKeyInput, audioPlayer, resultSection
+        audioPlayer, resultSection
     } = elements;
 
     setButtonLoading(elements, true);
@@ -220,7 +190,6 @@ async function generateSpeech(elements) {
             return;
         }
 
-        const apiKey = apiKeyInput.value.trim() || localStorage.getItem('apiKey');
         const params = new URLSearchParams();
 
         if (isSSMLMode) {
@@ -233,19 +202,12 @@ async function generateSpeech(elements) {
             params.append('s', styleSelect.value);
         }
 
-        if (apiKey) {
-            params.append('api_key', apiKey);
-        }
-
         const url = `${config.basePath}/tts?${params.toString()}`;
         const response = await fetch(url);
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({ error: `HTTP 错误: ${response.status}` }));
             showCustomAlert(errorData.error || '合成失败', 'error');
-            if (response.status === 401) {
-                elements.apiKeyGroup.classList.remove('hidden');
-            }
             return;
         }
 
@@ -332,32 +294,6 @@ function updateStyleOptions(elements) {
         }
         styleSelect.appendChild(option);
     });
-}
-
-// 保存/加载 API Key
-function saveApiKey() {
-    const apiKeyInput = document.getElementById('api-key');
-    const apiKey = apiKeyInput.value.trim();
-    if (apiKey) {
-        localStorage.setItem('apiKey', apiKey);
-        showCustomAlert('API Key 已保存', 'success');
-        document.getElementById('api-key-status').classList.remove('hidden');
-    } else {
-        localStorage.removeItem('apiKey');
-        showCustomAlert('API Key 已清除', 'info');
-        document.getElementById('api-key-status').classList.add('hidden');
-    }
-}
-
-function loadApiKeyFromLocalStorage(elements) {
-    const { apiKeyInput, apiKeyStatus } = elements;
-    const apiKey = localStorage.getItem('apiKey');
-    if (apiKey && apiKeyInput) {
-        apiKeyInput.value = apiKey;
-        if (apiKeyStatus) {
-            apiKeyStatus.classList.remove('hidden');
-        }
-    }
 }
 
 // 保存/加载表单数据
@@ -459,4 +395,38 @@ function showCustomAlert(message, type = 'info', title = '', duration = 3000) {
     const timeout = setTimeout(() => removeAlert(alert), duration);
     
     alert.addEventListener('mouseover', () => clearTimeout(timeout));
+}
+
+// 初始化系统监控
+async function initMetrics(elements) {
+    const { metricsContainer } = elements;
+    if (!metricsContainer) return;
+
+    const fetchAndRenderMetrics = async () => {
+        try {
+            const response = await fetch(`${config.basePath}/metrics`);
+            if (!response.ok) {
+                metricsContainer.innerHTML = '<p class="text-red-400">无法加载系统监控数据。</p>';
+                return;
+            }
+            const data = await response.json();
+            
+            const metricsHtml = `
+                <div class="grid grid-cols-2 gap-x-4 gap-y-2">
+                    <span class="font-semibold">TTS 请求:</span><span>${data.tts.requests} (成功: ${data.tts.success_rate}%)</span>
+                    <span class="font-semibold">平均延迟:</span><span>${data.tts.latency.avg}</span>
+                    <span class="font-semibold">缓存命中率:</span><span>${data.cache.hit_rate}%</span>
+                    <span class="font-semibold">内存分配:</span><span>${data.system.memory.alloc_mb} MB</span>
+                    <span class="font-semibold">协程数:</span><span>${data.system.goroutines}</span>
+                </div>
+            `;
+            metricsContainer.innerHTML = metricsHtml;
+        } catch (error) {
+            console.error('获取监控数据失败:', error);
+            metricsContainer.innerHTML = '<p class="text-red-400">加载失败，请检查服务状态。</p>';
+        }
+    };
+
+    fetchAndRenderMetrics();
+    setInterval(fetchAndRenderMetrics, 5000); // 每5秒刷新一次
 }
