@@ -90,4 +90,4 @@ EXPOSE 8080
 USER nonroot:nonroot
 
 # 运行应用程序
-ENTRYPOINT ["/app/main"]
+ENTRYPOINT ["/app/main", "-config", "/app/configs/config.yaml"]
