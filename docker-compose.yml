@@ -5,12 +5,3 @@ services:
     ports:
       - "127.0.0.1:8081:8080"
     restart: always
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-
-  watchtower:
-    image: containrrr/watchtower
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: --cleanup --include-stopped --label-enable
-    restart: always
