@@ -63,20 +63,20 @@ ARG BUILD_TIME
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
     -trimpath \
     -o /app/main \
     ./cmd/api
 
 # ============================================
-# 阶段 3: 最终运行镜像 (使用 distroless/static-debian12)
+# 阶段 3: 最终运行镜像 (使用 scratch)
 # 
 # 镜像选择对比:
 # - scratch: 最小 (~0 MB),但缺少 CA 证书、时区数据等
 # - alpine: 小 (~5 MB),但包含不必要的 shell 和工具
 # - distroless/static: 最佳选择 (~2 MB),包含必要的运行时库、CA 证书、时区数据
 # - distroless/base: 较大 (~20 MB),包含 glibc,不适合静态链接的 Go 程序
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM scratch
 
 # 设置标签
 LABEL maintainer="your-email@example.com" \
@@ -85,15 +85,17 @@ LABEL maintainer="your-email@example.com" \
       org.opencontainers.image.source="https://github.com/yourusername/tts"
 
 # 从构建器阶段复制二进制文件
-# 使用 --chown 确保文件所有权正确 (nonroot:nonroot = 65532:65532)
-COPY --from=builder --chown=nonroot:nonroot /app/main /app/main
+COPY --from=builder /app/main /app/main
 
 # 复制 FFmpeg 二进制文件到最终镜像
-COPY --from=builder --chown=nonroot:nonroot /usr/local/bin/ffmpeg /usr/bin/ffmpeg
+COPY --from=builder /usr/local/bin/ffmpeg /usr/bin/ffmpeg
 
-# 复制配置文件 (确保不包含敏感信息)
-# 生产环境应该通过环境变量或挂载卷提供配置
-COPY --chown=nonroot:nonroot configs /app/configs
+# 复制 CA 证书 (如果需要 HTTPS 请求)
+# 从 alpine 镜像复制 CA 证书
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# 复制时区数据 (如果需要)
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
 # 设置工作目录
 WORKDIR /app
@@ -107,14 +109,5 @@ ENV FFMPEG_PATH=/usr/bin/ffmpeg
 # 暴露端口 (使用非特权端口)
 EXPOSE 8080
 
-# 健康检查 (distroless 没有 shell,需要使用二进制自身的健康检查端点)
-# 如果应用支持健康检查端点,可以启用
-# HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-#   CMD ["/app/main", "healthcheck"]
-
-# 以非 root 用户运行
-# nonroot 镜像默认已经设置了 USER nonroot
-USER nonroot:nonroot
-
 # 运行应用程序
-ENTRYPOINT ["/app/main", "-config", "/app/configs/config.yaml"]
+ENTRYPOINT ["/app/main"]

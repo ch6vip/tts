@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"strings"
 	"sync/atomic"
 	"time"
 	"tts/internal/config"
@@ -113,9 +115,69 @@ func (s *cachingService) SynthesizeSpeech(ctx context.Context, req models.TTSReq
 	return resp, nil
 }
 
-// generateCacheKey creates a unique SHA256 hash for a TTSRequest.
-// 包含所有影响输出的参数,确保缓存的正确性
+// cacheKeyData 表示用于生成缓存键的核心参数
+type cacheKeyData struct {
+	Mode   string `json:"mode"`   // "text" 或 "ssml"
+	Content string `json:"content"` // 文本内容或SSML内容
+	Voice  string `json:"voice"`  // 语音ID
+	Rate   string `json:"rate"`   // 语速
+	Pitch  string `json:"pitch"`  // 音调
+	Style  string `json:"style"`  // 风格
+	Format string `json:"format"` // 音频格式
+}
+
+// normalizeValue 标准化参数值，去除前后空格并转换为小写
+func normalizeValue(value string) string {
+	return strings.TrimSpace(strings.ToLower(value))
+}
+
+// generateCacheKey 创建一个标准化的缓存键，只包含影响TTS输出的核心参数
 func (s *cachingService) generateCacheKey(req models.TTSRequest) string {
+	// 获取音频格式，优先使用请求中指定的格式，否则使用默认格式
+	cfg := config.Get()
+	format := req.Format
+	if format == "" {
+		format = cfg.TTS.DefaultFormat
+	}
+	
+	// 创建缓存键数据结构
+	keyData := cacheKeyData{
+		Format: normalizeValue(format),
+	}
+	
+	// 根据是否有 SSML 使用不同的模式
+	if req.SSML != "" {
+		keyData.Mode = "ssml"
+		keyData.Content = normalizeValue(req.SSML)
+		keyData.Voice = normalizeValue(req.Voice)
+		// SSML模式下，语速、音调和风格通常在SSML中定义，但为了保持一致性，
+		// 如果请求中提供了这些参数，也包含在缓存键中
+		keyData.Rate = normalizeValue(req.Rate)
+		keyData.Pitch = normalizeValue(req.Pitch)
+		keyData.Style = normalizeValue(req.Style)
+	} else {
+		keyData.Mode = "text"
+		keyData.Content = normalizeValue(req.Text)
+		keyData.Voice = normalizeValue(req.Voice)
+		keyData.Rate = normalizeValue(req.Rate)
+		keyData.Pitch = normalizeValue(req.Pitch)
+		keyData.Style = normalizeValue(req.Style)
+	}
+	
+	// 将结构体序列化为JSON，确保字段顺序一致
+	jsonData, err := json.Marshal(keyData)
+	if err != nil {
+		// 如果序列化失败，使用备用方法
+		return s.generateLegacyCacheKey(req)
+	}
+	
+	// 使用SHA256计算哈希值
+	hash := sha256.Sum256(jsonData)
+	return hex.EncodeToString(hash[:])
+}
+
+// generateLegacyCacheKey 备用缓存键生成方法，保持与旧版本的兼容性
+func (s *cachingService) generateLegacyCacheKey(req models.TTSRequest) string {
 	hash := sha256.New()
 	
 	// 获取音频格式，优先使用请求中指定的格式，否则使用默认格式
@@ -127,35 +189,30 @@ func (s *cachingService) generateCacheKey(req models.TTSRequest) string {
 	
 	// 根据是否有 SSML 使用不同的键
 	if req.SSML != "" {
-		// SSML 模式：包含 SSML 内容和所有可能影响输出的参数
 		hash.Write([]byte("ssml:"))
-		hash.Write([]byte(req.SSML))
+		hash.Write([]byte(normalizeValue(req.SSML)))
 		
-		// 即使使用 SSML，也要包含 Voice 参数，因为它可能影响默认的语言设置
 		if req.Voice != "" {
 			hash.Write([]byte("|voice:"))
-			hash.Write([]byte(req.Voice))
+			hash.Write([]byte(normalizeValue(req.Voice)))
 		}
 		
-		// 包含音频格式，因为它直接影响输出
 		hash.Write([]byte("|format:"))
-		hash.Write([]byte(format))
+		hash.Write([]byte(normalizeValue(format)))
 	} else {
-		// Text 模式：包含所有相关字段
 		hash.Write([]byte("text:"))
-		hash.Write([]byte(req.Text))
+		hash.Write([]byte(normalizeValue(req.Text)))
 		hash.Write([]byte("|voice:"))
-		hash.Write([]byte(req.Voice))
+		hash.Write([]byte(normalizeValue(req.Voice)))
 		hash.Write([]byte("|rate:"))
-		hash.Write([]byte(req.Rate))
+		hash.Write([]byte(normalizeValue(req.Rate)))
 		hash.Write([]byte("|pitch:"))
-		hash.Write([]byte(req.Pitch))
+		hash.Write([]byte(normalizeValue(req.Pitch)))
 		hash.Write([]byte("|style:"))
-		hash.Write([]byte(req.Style))
+		hash.Write([]byte(normalizeValue(req.Style)))
 		
-		// 包含音频格式
 		hash.Write([]byte("|format:"))
-		hash.Write([]byte(format))
+		hash.Write([]byte(normalizeValue(format)))
 	}
 	
 	return hex.EncodeToString(hash.Sum(nil))
