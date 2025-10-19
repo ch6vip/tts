@@ -30,23 +30,12 @@ COPY go.mod go.sum ./
 # 复制源代码
 COPY . .
 
-# 安装必要的工具
-RUN apk add --no-cache curl xz
-
-# 下载并安装 FFmpeg 静态二进制文件
-ARG TARGETARCH
-RUN case "${TARGETARCH}" in \
-        amd64) ARCH="amd64" ;; \
-        arm64) ARCH="arm64" ;; \
-        *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
-    esac && \
-    curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${ARCH}-static.tar.xz" -o ffmpeg.tar.xz && \
-    tar -xJf ffmpeg.tar.xz --strip-components=1 -C /usr/local/bin ffmpeg && \
-    chmod +x /usr/local/bin/ffmpeg && \
-    rm -rf ffmpeg.tar.xz
+# 安装必要的工具和 FFmpeg
+# 使用 Alpine 官方仓库中的 FFmpeg,更可靠且体积更小
+RUN apk add --no-cache ffmpeg
 
 # 设置 FFmpeg 路径环境变量
-ENV FFMPEG_PATH=/usr/local/bin/ffmpeg
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
 
 # 构建应用程序
 # CGO_ENABLED=0: 禁用 CGO,生成纯静态二进制
