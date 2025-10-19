@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 	"tts/internal/config"
 	custom_errors "tts/internal/errors"
 	"tts/internal/models"
@@ -52,14 +52,15 @@ type Client struct {
 	endpointMu     sync.RWMutex
 	endpointExpiry time.Time
 	ssmProcessor   *config.SSMLProcessor
+	logger         zerolog.Logger
 }
 
 // NewClient 创建一个新的Microsoft TTS客户端
-func NewClient(cfg *config.Config) *Client {
+func NewClient(cfg *config.Config, logger zerolog.Logger) *Client {
 	// 从Viper配置中创建SSML处理器
 	ssmProcessor, err := config.NewSSMLProcessor(&cfg.SSML)
 	if err != nil {
-		logrus.Fatalf("创建SSML处理器失败: %v", err)
+		logger.Fatal().Err(err).Msg("创建SSML处理器失败")
 	}
 	
 	// 配置优化的 HTTP Transport
@@ -99,6 +100,7 @@ func NewClient(cfg *config.Config) *Client {
 		voicesCacheExpiry: time.Time{}, // 初始时缓存为空
 		endpointExpiry:    time.Time{}, // 初始时端点为空
 		ssmProcessor:      ssmProcessor,
+		logger:            logger,
 	}
 
 	return client
@@ -115,12 +117,12 @@ func (c *Client) getEndpoint(ctx context.Context) (map[string]interface{}, error
 	c.endpointMu.RUnlock()
 
 	// 获取新的端点信息
-	endpoint, err := utils.GetEndpoint()
+	endpoint, err := utils.GetEndpointWithLogger(c.logger)
 	if err != nil {
-		logrus.Errorf("获取认证信息失败: %v", err)
+		c.logger.Error().Err(err).Msg("获取认证信息失败")
 		return nil, err
 	}
-	logrus.Infof("获取认证信息成功: %v", endpoint)
+	c.logger.Info().Interface("endpoint", endpoint).Msg("获取认证信息成功")
 
 	// 从 jwt 中解析出到期时间 exp
 	jwt := endpoint["t"].(string)
@@ -129,7 +131,7 @@ func (c *Client) getEndpoint(ctx context.Context) (map[string]interface{}, error
 		return nil, errors.New("jwt 中缺少 exp 字段")
 	}
 	expTime := time.Unix(exp, 0)
-	logrus.Infof("jwt  距到期时间: %v", time.Until(expTime))
+	c.logger.Info().Dur("time_until_expiry", time.Until(expTime)).Msg("jwt 距到期时间")
 
 	// 更新缓存
 	c.endpointMu.Lock()
@@ -356,7 +358,12 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 			// 检查是否是临时错误
 			if isTemporaryError(err) && i < maxRetries-1 {
 				waitTime := time.Duration(i+1) * 500 * time.Millisecond
-				logrus.Warnf("Request failed (attempt %d/%d), retrying in %v: %v", i+1, maxRetries, waitTime, err)
+				c.logger.Warn().
+					Int("attempt", i+1).
+					Int("max_attempts", maxRetries).
+					Dur("wait_time", waitTime).
+					Err(err).
+					Msg("Request failed, retrying")
 				time.Sleep(waitTime)
 				continue
 			}
@@ -371,10 +378,10 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 		// 获取响应体以便调试
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		logrus.WithFields(logrus.Fields{
-			"status_code": resp.StatusCode,
-			"body":        string(body),
-		}).Error("TTS API错误")
+		c.logger.Error().
+			Int("status_code", resp.StatusCode).
+			Str("body", string(body)).
+			Msg("TTS API错误")
 		return nil, custom_errors.NewUpstreamError(resp.StatusCode, "TTS API 错误", errors.New(string(body)))
 	}
 

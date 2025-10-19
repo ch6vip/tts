@@ -62,6 +62,11 @@ func getLogger() zerolog.Logger {
 	return logger
 }
 
+// GetLogger 获取全局 zerolog 实例（公开接口）
+func GetLogger() zerolog.Logger {
+	return getLogger()
+}
+
 // Logger 是一个HTTP中间件，记录请求的详细信息
 // 使用 zerolog 实现高性能日志记录，减少内存分配
 func Logger() gin.HandlerFunc {

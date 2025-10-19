@@ -12,7 +12,7 @@ import (
 	"tts/internal/models"
 
 	"github.com/patrickmn/go-cache"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 )
 
 // CacheStats 缓存统计信息
@@ -32,6 +32,7 @@ type cachingService struct {
 	misses       int64 // 缓存未命中次数
 	totalSize    int64 // 缓存总大小(字节)
 	maxTotalSize int64 // 缓存最大总大小限制(字节)，0表示不限制
+	logger       zerolog.Logger
 }
 
 // GetUnderlyingService returns the underlying service wrapped by the cache.
@@ -41,7 +42,7 @@ func (s *cachingService) GetUnderlyingService() Service {
 
 // NewCachingService creates a new caching service.
 // maxTotalSize 参数是可选的，默认为0表示不限制缓存大小
-func NewCachingService(next Service, defaultExpiration, cleanupInterval time.Duration, maxTotalSize ...int64) Service {
+func NewCachingService(next Service, defaultExpiration, cleanupInterval time.Duration, logger zerolog.Logger, maxTotalSize ...int64) Service {
 	var maxSize int64 = 0 // 默认不限制
 	if len(maxTotalSize) > 0 {
 		maxSize = maxTotalSize[0]
@@ -51,6 +52,7 @@ func NewCachingService(next Service, defaultExpiration, cleanupInterval time.Dur
 		next:         next,
 		cache:        cache.New(defaultExpiration, cleanupInterval),
 		maxTotalSize: maxSize,
+		logger:       logger,
 	}
 	
 	// 设置缓存项被删除时的回调函数，用于更新总大小统计
@@ -76,14 +78,14 @@ func (s *cachingService) SynthesizeSpeech(ctx context.Context, req models.TTSReq
 	// Try to retrieve the response from the cache.
 	if resp, found := s.cache.Get(key); found {
 		atomic.AddInt64(&s.hits, 1)
-		logrus.WithField("key", key).Debug("Cache hit")
+		s.logger.Debug().Str("key", key).Msg("Cache hit")
 		result := resp.(*models.TTSResponse)
 		result.CacheHit = true
 		return result, nil
 	}
 
 	atomic.AddInt64(&s.misses, 1)
-	logrus.WithField("key", key).Debug("Cache miss")
+	s.logger.Debug().Str("key", key).Msg("Cache miss")
 
 	// If not in cache, call the actual TTS service.
 	resp, err := s.next.SynthesizeSpeech(ctx, req)
@@ -98,12 +100,12 @@ func (s *cachingService) SynthesizeSpeech(ctx context.Context, req models.TTSReq
 	
 	// 如果设置了最大限制且添加此项会超过限制，则不缓存
 	if s.maxTotalSize > 0 && (currentSize+responseSize) > s.maxTotalSize {
-		logrus.WithFields(logrus.Fields{
-			"key":          key,
-			"current_size": currentSize,
-			"response_size": responseSize,
-			"max_size":     s.maxTotalSize,
-		}).Debug("Skipping cache due to size limit")
+		s.logger.Debug().
+			Str("key", key).
+			Int64("current_size", currentSize).
+			Int64("response_size", responseSize).
+			Int64("max_size", s.maxTotalSize).
+			Msg("Skipping cache due to size limit")
 		return resp, nil
 	}
 	
@@ -242,7 +244,7 @@ func (s *cachingService) GetStats() CacheStats {
 func (s *cachingService) ClearCache() {
 	s.cache.Flush()
 	atomic.StoreInt64(&s.totalSize, 0)
-	logrus.Info("Cache cleared")
+	s.logger.Info().Msg("Cache cleared")
 }
 
 // GetCacheKey 公开方法用于测试或调试

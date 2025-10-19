@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 	"tts/internal/models"
 	"tts/internal/tts/microsoft"
 )
@@ -40,6 +40,7 @@ type WorkerPool struct {
 	cancel      context.CancelFunc     // 取消函数
 	metrics     *PoolMetrics           // 性能指标
 	closed      int32                  // 关闭状态标志(原子操作)
+	logger      zerolog.Logger         // 日志记录器
 }
 
 // PoolMetrics 工作池性能指标
@@ -53,7 +54,7 @@ type PoolMetrics struct {
 }
 
 // NewWorkerPool 创建新的工作池
-func NewWorkerPool(workers int, client *microsoft.Client) *WorkerPool {
+func NewWorkerPool(workers int, client *microsoft.Client, logger zerolog.Logger) *WorkerPool {
 	if workers <= 0 {
 		workers = 5 // 默认 5 个 worker
 	}
@@ -68,6 +69,7 @@ func NewWorkerPool(workers int, client *microsoft.Client) *WorkerPool {
 		client:   client,
 		metrics:  &PoolMetrics{},
 		closed:   0,
+		logger:   logger,
 	}
 }
 
@@ -76,7 +78,7 @@ func (p *WorkerPool) Start() {
 	// 使用后台 context 创建一个可取消的 context,用于控制整个池的生命周期
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 
-	logrus.Infof("Starting worker pool with %d workers", p.workers)
+	p.logger.Info().Int("workers", p.workers).Msg("Starting worker pool")
 	
 	// 启动 worker goroutines
 	for i := 0; i < p.workers; i++ {
@@ -94,17 +96,17 @@ func (p *WorkerPool) Start() {
 func (p *WorkerPool) worker(id int) {
 	defer p.wg.Done()
 	
-	logrus.Debugf("Worker %d started", id)
+	p.logger.Debug().Int("worker_id", id).Msg("Worker started")
 	
 	for {
 		select {
 		case <-p.ctx.Done():
-			logrus.Debugf("Worker %d stopped", id)
+			p.logger.Debug().Int("worker_id", id).Msg("Worker stopped")
 			return
 			
 		case job, ok := <-p.jobs:
 			if !ok {
-				logrus.Debugf("Worker %d: job channel closed", id)
+				p.logger.Debug().Int("worker_id", id).Msg("Worker: job channel closed")
 				return
 			}
 			
@@ -130,12 +132,16 @@ func (p *WorkerPool) processJob(job *SegmentJob, workerID int) *SegmentResult {
 		Index: job.Index,
 	}
 
-	logrus.Debugf("Worker %d processing job %s (index: %d)", workerID, job.ID, job.Index)
+	p.logger.Debug().
+		Int("worker_id", workerID).
+		Str("job_id", job.ID).
+		Int("index", job.Index).
+		Msg("Worker processing job")
 
 	// 检查 job context 是否已经取消
 	if job.Context.Err() != nil {
 		result.Error = fmt.Errorf("job context cancelled before processing segment %d: %w", job.Index, job.Context.Err())
-		logrus.Warnf("%v", result.Error)
+		p.logger.Warn().Err(result.Error).Msg("Job context cancelled before processing")
 		p.metrics.mu.Lock()
 		p.metrics.FailedJobs++
 		p.metrics.mu.Unlock()
@@ -146,7 +152,7 @@ func (p *WorkerPool) processJob(job *SegmentJob, workerID int) *SegmentResult {
 	resp, err := p.client.SynthesizeSpeech(job.Context, job.Request)
 	if err != nil {
 		result.Error = fmt.Errorf("worker %d failed to synthesize segment %d: %w", workerID, job.Index, err)
-		logrus.Errorf("%v", result.Error)
+		p.logger.Error().Err(result.Error).Msg("Worker failed to synthesize segment")
 
 		// 更新失败指标
 		p.metrics.mu.Lock()
@@ -165,8 +171,12 @@ func (p *WorkerPool) processJob(job *SegmentJob, workerID int) *SegmentResult {
 	p.metrics.TotalLatency += result.Duration.Nanoseconds()
 	p.metrics.mu.Unlock()
 	
-	logrus.Debugf("Worker %d completed job %s in %v (%d bytes)",
-		workerID, job.ID, result.Duration, len(result.AudioData))
+	p.logger.Debug().
+		Int("worker_id", workerID).
+		Str("job_id", job.ID).
+		Dur("duration", result.Duration).
+		Int("bytes", len(result.AudioData)).
+		Msg("Worker completed job")
 	
 	return result
 }
@@ -198,7 +208,7 @@ func (p *WorkerPool) Submit(job *SegmentJob) error {
 		return fmt.Errorf("job context cancelled during submission: %w", job.Context.Err())
 	default:
 		// 队列满时记录警告并阻塞等待
-		logrus.Warnf("Job queue is full (capacity: %d), blocking submission", cap(p.jobs))
+		p.logger.Warn().Int("capacity", cap(p.jobs)).Msg("Job queue is full, blocking submission")
 		select {
 		case p.jobs <- job:
 			return nil
@@ -219,11 +229,11 @@ func (p *WorkerPool) Results() <-chan *SegmentResult {
 func (p *WorkerPool) Close() {
 	// 使用原子操作标记已关闭
 	if !atomic.CompareAndSwapInt32(&p.closed, 0, 1) {
-		logrus.Warn("Worker pool already closed")
+		p.logger.Warn().Msg("Worker pool already closed")
 		return
 	}
 	
-	logrus.Info("Closing worker pool...")
+	p.logger.Info().Msg("Closing worker pool...")
 	
 	// 先取消上下文,通知所有 worker 停止
 	if p.cancel != nil {
@@ -242,9 +252,9 @@ func (p *WorkerPool) Close() {
 	
 	select {
 	case <-done:
-		logrus.Info("All workers stopped gracefully")
+		p.logger.Info().Msg("All workers stopped gracefully")
 	case <-time.After(10 * time.Second):
-		logrus.Warn("Timeout waiting for workers to stop")
+		p.logger.Warn().Msg("Timeout waiting for workers to stop")
 	}
 	
 	// 关闭结果通道
@@ -255,7 +265,7 @@ func (p *WorkerPool) Close() {
 	p.metrics.ActiveWorkers = 0
 	p.metrics.mu.Unlock()
 	
-	logrus.Info("Worker pool closed")
+	p.logger.Info().Msg("Worker pool closed")
 }
 
 // GetMetrics 获取性能指标

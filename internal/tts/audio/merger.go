@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 )
 
 // Merger 音频合并器接口
@@ -21,10 +21,11 @@ type Merger interface {
 type FFmpegMerger struct {
 	ffmpegPath string
 	tmpDir     string
+	logger     zerolog.Logger
 }
 
 // NewFFmpegMerger 创建 FFmpeg 合并器
-func NewFFmpegMerger(ffmpegPath string) *FFmpegMerger {
+func NewFFmpegMerger(ffmpegPath string, logger zerolog.Logger) *FFmpegMerger {
 	if ffmpegPath == "" {
 		ffmpegPath = "ffmpeg" // 使用 PATH 中的 ffmpeg
 	}
@@ -32,6 +33,7 @@ func NewFFmpegMerger(ffmpegPath string) *FFmpegMerger {
 	return &FFmpegMerger{
 		ffmpegPath: ffmpegPath,
 		tmpDir:     os.TempDir(),
+		logger:     logger,
 	}
 }
 
@@ -48,7 +50,7 @@ func (m *FFmpegMerger) Merge(segments [][]byte) ([]byte, error) {
 	
 	// 检查 ffmpeg 是否可用
 	if err := m.checkFFmpeg(); err != nil {
-		logrus.Warnf("FFmpeg not available: %v, falling back to simple merge", err)
+		m.logger.Warn().Err(err).Msg("FFmpeg not available, falling back to simple merge")
 		return m.simpleMerge(segments)
 	}
 	
@@ -95,7 +97,10 @@ func (m *FFmpegMerger) Merge(segments [][]byte) ([]byte, error) {
 	cmd.Stderr = &stderr
 	
 	if err := cmd.Run(); err != nil {
-		logrus.Errorf("FFmpeg merge failed: %v, stderr: %s", err, stderr.String())
+		m.logger.Error().
+			Err(err).
+			Str("stderr", stderr.String()).
+			Msg("FFmpeg merge failed")
 		// 如果 FFmpeg 失败，回退到简单合并
 		return m.simpleMerge(segments)
 	}
@@ -106,7 +111,7 @@ func (m *FFmpegMerger) Merge(segments [][]byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read merged file: %w", err)
 	}
 	
-	logrus.Infof("Successfully merged %d audio segments using FFmpeg", len(segments))
+	m.logger.Info().Int("segments", len(segments)).Msg("Successfully merged audio segments using FFmpeg")
 	return merged, nil
 }
 
@@ -119,18 +124,20 @@ func (m *FFmpegMerger) checkFFmpeg() error {
 // simpleMerge 简单合并（回退方案）
 // 注意：此方法会移除 ID3 标签但不处理帧边界，音质可能受影响
 func (m *FFmpegMerger) simpleMerge(segments [][]byte) ([]byte, error) {
-	logrus.Warn("Using simple merge (may cause audio artifacts)")
+	m.logger.Warn().Msg("Using simple merge (may cause audio artifacts)")
 	
-	merger := &SimpleMerger{}
+	merger := &SimpleMerger{logger: m.logger}
 	return merger.Merge(segments)
 }
 
 // SimpleMerger 简单的字节级合并器（移除 ID3 标签）
-type SimpleMerger struct{}
+type SimpleMerger struct {
+	logger zerolog.Logger
+}
 
 // NewSimpleMerger 创建简单合并器
-func NewSimpleMerger() *SimpleMerger {
-	return &SimpleMerger{}
+func NewSimpleMerger(logger zerolog.Logger) *SimpleMerger {
+	return &SimpleMerger{logger: logger}
 }
 
 // Merge 执行简单的字节拼接（移除 ID3 标签）
@@ -165,7 +172,7 @@ func (s *SimpleMerger) Merge(segments [][]byte) ([]byte, error) {
 		}
 	}
 	
-	logrus.Warnf("Simple merge completed for %d segments (may have audio artifacts)", len(segments))
+	s.logger.Warn().Int("segments", len(segments)).Msg("Simple merge completed (may have audio artifacts)")
 	return merged.Bytes(), nil
 }
 
@@ -182,7 +189,8 @@ func removeID3Tags(data []byte) []byte {
 		tagSize := size + 10 // 加上 10 字节的头部
 		
 		if tagSize < len(data) {
-			logrus.Debugf("Removed ID3v2 tag (%d bytes)", tagSize)
+			// 这个函数不在结构体方法中，无法使用 logger
+			// 如果需要日志，应该将此函数改为方法或传入 logger
 			return data[tagSize:]
 		}
 	}
@@ -193,14 +201,18 @@ func removeID3Tags(data []byte) []byte {
 // StreamMerger 流式合并器（用于大文件）
 type StreamMerger struct {
 	ffmpegPath string
+	logger     zerolog.Logger
 }
 
 // NewStreamMerger 创建流式合并器
-func NewStreamMerger(ffmpegPath string) *StreamMerger {
+func NewStreamMerger(ffmpegPath string, logger zerolog.Logger) *StreamMerger {
 	if ffmpegPath == "" {
 		ffmpegPath = "ffmpeg"
 	}
-	return &StreamMerger{ffmpegPath: ffmpegPath}
+	return &StreamMerger{
+		ffmpegPath: ffmpegPath,
+		logger:     logger,
+	}
 }
 
 // MergeToWriter 将合并结果直接写入 Writer（避免内存占用）

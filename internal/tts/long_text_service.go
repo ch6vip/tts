@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 	"tts/internal/models"
 	"tts/internal/tts/audio"
 	"tts/internal/tts/microsoft"
@@ -21,6 +21,7 @@ type LongTextTTSService struct {
 	workerPool   *WorkerPool
 	maxSegmentLen int
 	minTextForSplit int // 触发分段的最小文本长度
+	logger       zerolog.Logger
 }
 
 // LongTextConfig 长文本处理配置
@@ -33,7 +34,7 @@ type LongTextConfig struct {
 }
 
 // NewLongTextTTSService 创建长文本 TTS 服务
-func NewLongTextTTSService(client *microsoft.Client, config LongTextConfig) *LongTextTTSService {
+func NewLongTextTTSService(client *microsoft.Client, config LongTextConfig, logger zerolog.Logger) *LongTextTTSService {
 	// 设置默认值
 	if config.MaxSegmentLength <= 0 {
 		config.MaxSegmentLength = 500
@@ -49,17 +50,17 @@ func NewLongTextTTSService(client *microsoft.Client, config LongTextConfig) *Lon
 	var segmenter SegmentationStrategy
 	if config.UseSmartSegment {
 		segmenter = NewSmartSegmenter()
-		logrus.Info("Using smart segmentation strategy")
+		logger.Info().Msg("Using smart segmentation strategy")
 	} else {
 		segmenter = NewFixedLengthSegmenter()
-		logrus.Info("Using fixed-length segmentation strategy")
+		logger.Info().Msg("Using fixed-length segmentation strategy")
 	}
 
 	// 创建音频合并器
-	merger := audio.NewFFmpegMerger(config.FFmpegPath)
+	merger := audio.NewFFmpegMerger(config.FFmpegPath, logger)
 
 	// 创建并启动工作池
-	pool := NewWorkerPool(config.WorkerCount, client)
+	pool := NewWorkerPool(config.WorkerCount, client, logger)
 	pool.Start()
 
 	return &LongTextTTSService{
@@ -69,6 +70,7 @@ func NewLongTextTTSService(client *microsoft.Client, config LongTextConfig) *Lon
 		workerPool:      pool,
 		maxSegmentLen:   config.MaxSegmentLength,
 		minTextForSplit: config.MinTextForSplit,
+		logger:          logger,
 	}
 }
 
@@ -84,13 +86,17 @@ func (s *LongTextTTSService) SynthesizeSpeech(ctx context.Context, req models.TT
 	// 如果文本长度小于阈值，直接调用单次合成
 	textLen := utf8.RuneCountInString(req.Text)
 	if textLen <= s.minTextForSplit {
-		logrus.Infof("Text length (%d) below split threshold (%d), using single synthesis",
-			textLen, s.minTextForSplit)
+		s.logger.Info().
+			Int("text_length", textLen).
+			Int("threshold", s.minTextForSplit).
+			Msg("Text length below split threshold, using single synthesis")
 		return s.client.SynthesizeSpeech(ctx, req)
 	}
 
 	// 长文本，使用分段合成
-	logrus.Infof("Text length (%d) exceeds threshold, using segmented synthesis", textLen)
+	s.logger.Info().
+		Int("text_length", textLen).
+		Msg("Text length exceeds threshold, using segmented synthesis")
 	return s.synthesizeLongText(ctx, req, startTime)
 }
 
@@ -101,7 +107,10 @@ func (s *LongTextTTSService) synthesizeLongText(ctx context.Context, req models.
 	segments := s.segmenter.Segment(req.Text, s.maxSegmentLen)
 	segmentDuration := time.Since(segmentStart)
 	
-	logrus.Infof("Text segmented into %d parts in %v", len(segments), segmentDuration)
+	s.logger.Info().
+		Int("parts", len(segments)).
+		Dur("duration", segmentDuration).
+		Msg("Text segmented")
 
 	// 如果只有一个片段，直接合成
 	if len(segments) == 1 {
@@ -139,7 +148,10 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 		for idx, segment := range segments {
 			// 检查 context
 			if ctx.Err() != nil {
-				logrus.Warnf("Context cancelled during job submission at segment %d: %v", idx, ctx.Err())
+				s.logger.Warn().
+					Int("segment", idx).
+					Err(ctx.Err()).
+					Msg("Context cancelled during job submission")
 				errChan <- fmt.Errorf("context cancelled during job submission: %w", ctx.Err())
 				return
 			}
@@ -160,7 +172,10 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 			}
 
 			if err := s.workerPool.Submit(job); err != nil {
-				logrus.Errorf("Failed to submit job %d: %v", idx, err)
+				s.logger.Error().
+					Int("job", idx).
+					Err(err).
+					Msg("Failed to submit job")
 				errChan <- fmt.Errorf("failed to submit job %d: %w", idx, err)
 				return
 			}
@@ -219,7 +234,10 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 	}
 	
 	submitDuration := time.Since(startTime) - segmentDuration
-	logrus.Infof("Submitted %d jobs in %v", segmentCount, submitDuration)
+	s.logger.Info().
+		Int("jobs", segmentCount).
+		Dur("duration", submitDuration).
+		Msg("Submitted jobs")
 	
 	// 处理结果
 	for receivedCount < segmentCount {
@@ -236,7 +254,10 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 				if firstError == nil {
 					firstError = result.Error
 				}
-				logrus.Errorf("Segment %d failed: %v", result.Index, result.Error)
+				s.logger.Error().
+					Int("segment", result.Index).
+					Err(result.Error).
+					Msg("Segment failed")
 			} else {
 				if result.Index < 0 || result.Index >= len(audioSegments) {
 					return nil, fmt.Errorf("invalid segment index: %d", result.Index)
@@ -248,8 +269,12 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 				totalAudioSize += int64(len(result.AudioData))
 				mu.Unlock()
 				
-				logrus.Debugf("Received segment %d/%d (%d bytes, took %v)",
-					result.Index+1, segmentCount, len(result.AudioData), result.Duration)
+				s.logger.Debug().
+					Int("segment", result.Index+1).
+					Int("total", segmentCount).
+					Int("bytes", len(result.AudioData)).
+					Dur("duration", result.Duration).
+					Msg("Received segment")
 			}
 			receivedCount++
 		
@@ -265,8 +290,11 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 	wg.Wait()
 	
 	collectDuration := time.Since(collectStart)
-	logrus.Infof("Collected %d audio segments (%d bytes total) in %v",
-		segmentCount, totalAudioSize, collectDuration)
+	s.logger.Info().
+		Int("segments", segmentCount).
+		Int64("total_bytes", totalAudioSize).
+		Dur("duration", collectDuration).
+		Msg("Collected audio segments")
 
 	// 检查是否有错误
 	if errorCount > 0 {
@@ -291,14 +319,24 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 	mergeDuration := time.Since(mergeStart)
 	totalDuration := time.Since(startTime)
 	
-	logrus.Infof("Long text synthesis completed in %v (segment: %v, submit: %v, collect: %v, merge: %v)",
-		totalDuration, segmentDuration, submitDuration, collectDuration, mergeDuration)
+	s.logger.Info().
+		Dur("total_duration", totalDuration).
+		Dur("segment_duration", segmentDuration).
+		Dur("submit_duration", submitDuration).
+		Dur("collect_duration", collectDuration).
+		Dur("merge_duration", mergeDuration).
+		Msg("Long text synthesis completed")
 
 	// 4. 获取工作池统计
 	stats := s.workerPool.Stats()
 	avgLatency := s.workerPool.GetAverageLatency()
-	logrus.Infof("Worker pool stats: %d total, %d completed, %d failed, %.2f%% success rate, avg latency: %v",
-		stats.TotalJobs, stats.CompletedJobs, stats.FailedJobs, stats.SuccessRate, avgLatency)
+	s.logger.Info().
+		Int64("total_jobs", stats.TotalJobs).
+		Int64("completed_jobs", stats.CompletedJobs).
+		Int64("failed_jobs", stats.FailedJobs).
+		Float64("success_rate", stats.SuccessRate).
+		Dur("avg_latency", avgLatency).
+		Msg("Worker pool stats")
 
 	return &models.TTSResponse{
 		AudioContent: merged,

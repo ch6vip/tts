@@ -6,11 +6,11 @@ import (
 	custom_errors "tts/internal/errors"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 )
 
 // ErrorHandler 是一个处理错误的 Gin 中间件
-func ErrorHandler() gin.HandlerFunc {
+func ErrorHandler(logger zerolog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next() // 先执行后续的处理函数
 
@@ -20,8 +20,8 @@ func ErrorHandler() gin.HandlerFunc {
 
 			// 记录错误日志
 			traceID, _ := c.Get("trace_id")
-			logger := logrus.WithField("trace_id", traceID)
-			logger.WithError(err).Error("请求处理时发生错误")
+			log := logger.With().Str("trace_id", traceID.(string)).Logger()
+			log.Error().Err(err).Msg("请求处理时发生错误")
 
 			// 根据错误类型映射到 HTTP 状态码和响应
 			var httpStatus int

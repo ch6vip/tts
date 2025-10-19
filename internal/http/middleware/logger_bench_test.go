@@ -8,7 +8,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
-	"github.com/sirupsen/logrus"
 )
 
 // BenchmarkZerologLogger 测试 zerolog 日志中间件的性能
@@ -46,38 +45,21 @@ func BenchmarkZerologLogger(b *testing.B) {
 	}
 }
 
-// BenchmarkLogrusLogger 测试 logrus 日志中间件的性能
-func BenchmarkLogrusLogger(b *testing.B) {
+// BenchmarkLoggerWithDifferentFormats 测试不同格式的 zerolog 日志中间件性能
+func BenchmarkLoggerWithDifferentFormats(b *testing.B) {
 	// 设置 Gin 为测试模式
 	gin.SetMode(gin.TestMode)
 
 	// 创建一个空缓冲区来丢弃日志输出
 	var buf bytes.Buffer
 
-	// 初始化 logrus 使用我们的缓冲区
-	logrus.SetOutput(&buf)
-	logrus.SetFormatter(&logrus.JSONFormatter{})
-
-	// 创建一个模拟的 logrus 中间件
-	logrusMiddleware := func() gin.HandlerFunc {
-		return func(c *gin.Context) {
-			// 处理请求
-			c.Next()
-
-			// 使用 logrus 记录日志
-			logrus.WithFields(logrus.Fields{
-				"method":     c.Request.Method,
-				"path":       c.Request.URL.Path,
-				"ip":         c.ClientIP(),
-				"status":     c.Writer.Status(),
-				"user_agent": c.Request.UserAgent(),
-			}).Info("request completed")
-		}
-	}
+	// 初始化 zerolog 使用 JSON 格式
+	logger = zerolog.New(&buf).Level(zerolog.InfoLevel).With().Timestamp().Logger()
+	initialized = true
 
 	// 创建 Gin 路由
 	router := gin.New()
-	router.Use(logrusMiddleware())
+	router.Use(Logger())
 
 	// 添加一个测试路由
 	router.GET("/test", func(c *gin.Context) {

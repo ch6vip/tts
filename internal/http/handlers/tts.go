@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 	
 	"tts/internal/config"
 	custom_errors "tts/internal/errors"
@@ -85,12 +85,13 @@ func getDetailedErrorMessage(errType UpstreamErrorType, originalErr error) strin
 
 
 // getLoggerWithTraceID 从 Gin 上下文中获取带有 trace_id 的日志记录器
-func getLoggerWithTraceID(c *gin.Context) *logrus.Entry {
+func (h *TTSHandler) getLoggerWithTraceID(c *gin.Context) *zerolog.Logger {
 	traceID, exists := c.Get("trace_id")
 	if !exists {
 		traceID = "unknown"
 	}
-	return logrus.WithField("trace_id", traceID)
+	logger := h.logger.With().Str("trace_id", traceID.(string)).Logger()
+	return &logger
 }
 
 // formatFileSize 格式化文件大小
@@ -112,29 +113,31 @@ type TTSHandler struct {
 	ttsService     tts.Service
 	longTextService *tts.LongTextTTSService
 	config         *config.Config
+	logger         zerolog.Logger
 }
 
 // NewTTSHandler 创建一个新的TTS处理器
-func NewTTSHandler(service tts.Service, longTextService *tts.LongTextTTSService, cfg *config.Config) *TTSHandler {
+func NewTTSHandler(service tts.Service, longTextService *tts.LongTextTTSService, cfg *config.Config, logger zerolog.Logger) *TTSHandler {
 	return &TTSHandler{
 		ttsService:      service,
 		longTextService: longTextService,
 		config:          cfg,
+		logger:          logger,
 	}
 }
 
 // processTTSRequest 处理TTS请求的核心逻辑
 func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, startTime time.Time, parseTime time.Duration, requestType string) {
 	// 验证必要参数
-	logger := getLoggerWithTraceID(c)
+	logger := h.getLoggerWithTraceID(c)
 	if req.Text == "" && req.SSML == "" {
-		logger.Error("错误: 未提供 text 或 ssml 参数")
+		logger.Error().Msg("错误: 未提供 text 或 ssml 参数")
 		_ = c.Error(fmt.Errorf("%w: 必须提供 text 或 ssml 参数", custom_errors.ErrInvalidInput))
 		return
 	}
 
 	if req.Text != "" && req.SSML != "" {
-		logger.Error("错误: 不能同时提供 text 和 ssml 参数")
+		logger.Error().Msg("错误: 不能同时提供 text 和 ssml 参数")
 		_ = c.Error(fmt.Errorf("%w: 不能同时提供 text 和 ssml 参数", custom_errors.ErrInvalidInput))
 		return
 	}
@@ -160,10 +163,10 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 	// 检查是否需要分段处理 (SSML不支持分段)
 	segmentThreshold := h.config.TTS.SegmentThreshold
 	if !isSSML && reqTextLength > segmentThreshold && reqTextLength <= h.config.TTS.MaxTextLength {
-		logger.WithFields(logrus.Fields{
-			"text_length": reqTextLength,
-			"threshold":   segmentThreshold,
-		}).Info("文本长度超过阈值，使用优化的分段处理")
+		logger.Info().
+			Int("text_length", reqTextLength).
+			Int("threshold", segmentThreshold).
+			Msg("文本长度超过阈值，使用优化的分段处理")
 		h.handleOptimizedSegmentedTTS(c, req, startTime)
 		return
 	}
@@ -180,11 +183,11 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 		metrics.GlobalMetrics.RecordCacheMiss()
 	}
 	
-	logger.WithFields(logrus.Fields{
-		"duration":    synthTime,
-		"text_length": reqTextLength,
-		"cache_hit":   resp != nil && resp.CacheHit,
-	}).Info("TTS合成耗时")
+	logger.Info().
+		Dur("duration", synthTime).
+		Int("text_length", reqTextLength).
+		Bool("cache_hit", resp != nil && resp.CacheHit).
+		Msg("TTS合成耗时")
 
 	if err != nil {
 		// 分类错误并提供详细信息
@@ -196,11 +199,11 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 		errType := classifyUpstreamError(err, statusCode)
 		detailedMsg := getDetailedErrorMessage(errType, err)
 
-		logger.WithFields(logrus.Fields{
-			"error_type":     errType,
-			"original_error": err,
-			"status_code":    statusCode,
-		}).Error("TTS合成失败")
+		logger.Error().
+			Int("error_type", int(errType)).
+			Err(err).
+			Int("status_code", statusCode).
+			Msg("TTS合成失败")
 
 		_ = c.Error(fmt.Errorf("%w: %s", custom_errors.ErrUpstreamServiceFailed, detailedMsg))
 		return
@@ -210,21 +213,21 @@ func (h *TTSHandler) processTTSRequest(c *gin.Context, req models.TTSRequest, st
 	c.Header("Content-Type", "audio/mpeg")
 	writeStart := time.Now()
 	if _, err := c.Writer.Write(resp.AudioContent); err != nil {
-		logger.WithError(err).Error("写入响应失败")
+		logger.Error().Err(err).Msg("写入响应失败")
 		return
 	}
 	writeTime := time.Since(writeStart)
 
 	// 记录总耗时
 	totalTime := time.Since(startTime)
-	logger.WithFields(logrus.Fields{
-		"request_type": requestType,
-		"total_time":   totalTime,
-		"parse_time":   parseTime,
-		"synth_time":   synthTime,
-		"write_time":   writeTime,
-		"audio_size":   formatFileSize(len(resp.AudioContent)),
-	}).Info("TTS请求总耗时")
+	logger.Info().
+		Str("request_type", requestType).
+		Dur("total_time", totalTime).
+		Dur("parse_time", parseTime).
+		Dur("synth_time", synthTime).
+		Dur("write_time", writeTime).
+		Str("audio_size", formatFileSize(len(resp.AudioContent))).
+		Msg("TTS请求总耗时")
 }
 
 // fillDefaultValues 填充默认值
@@ -284,14 +287,14 @@ func (h *TTSHandler) HandleTTSPost(c *gin.Context) {
 	if c.ContentType() == "application/json" {
 		err = c.ShouldBindJSON(&req)
 		if err != nil {
-			getLoggerWithTraceID(c).WithError(err).Error("JSON解析错误")
+			h.getLoggerWithTraceID(c).Err(err).Msg("JSON解析错误")
 			_ = c.Error(fmt.Errorf("%w: 无效的JSON请求: %v", custom_errors.ErrInvalidInput, err))
 			return
 		}
 	} else {
 		err = c.ShouldBind(&req)
 		if err != nil {
-			getLoggerWithTraceID(c).WithError(err).Error("表单解析错误")
+			h.getLoggerWithTraceID(c).Err(err).Msg("表单解析错误")
 			_ = c.Error(fmt.Errorf("%w: 无法解析表单数据: %v", custom_errors.ErrInvalidInput, err))
 			return
 		}
@@ -329,14 +332,14 @@ func (h *TTSHandler) HandleOpenAITTS(c *gin.Context) {
 	// 创建内部TTS请求
 	req := h.convertOpenAIRequest(openaiReq)
 
-	getLoggerWithTraceID(c).WithFields(logrus.Fields{
-		"model":       openaiReq.Model,
-		"from_voice":  openaiReq.Voice,
-		"to_voice":    req.Voice,
-		"from_speed":  openaiReq.Speed,
-		"to_rate":     req.Rate,
-		"text_length": utf8.RuneCountInString(req.Text),
-	}).Info("OpenAI TTS请求")
+	h.getLoggerWithTraceID(c).Info().
+		Str("model", openaiReq.Model).
+		Str("from_voice", openaiReq.Voice).
+		Str("to_voice", req.Voice).
+		Float64("from_speed", openaiReq.Speed).
+		Str("to_rate", req.Rate).
+		Int("text_length", utf8.RuneCountInString(req.Text)).
+		Msg("OpenAI TTS请求")
 
 	h.processTTSRequest(c, req, startTime, parseTime, "OpenAI TTS")
 }
@@ -423,7 +426,7 @@ func (h *TTSHandler) HandleReader(context *gin.Context) {
 		Name: displayName,
 		Url:  url,
 	}); err != nil {
-		getLoggerWithTraceID(context).WithError(err).Error("写入响应失败")
+		h.getLoggerWithTraceID(context).Err(err).Msg("写入响应失败")
 		_ = context.Error(fmt.Errorf("%w: 写入响应失败", custom_errors.ErrUpstreamServiceFailed))
 	}
 }
@@ -513,7 +516,7 @@ func (h *TTSHandler) HandleIFreeTime(context *gin.Context) {
 
 // handleOptimizedSegmentedTTS 使用优化的长文本服务处理分段TTS请求
 func (h *TTSHandler) handleOptimizedSegmentedTTS(c *gin.Context, req models.TTSRequest, startTime time.Time) {
-	logger := getLoggerWithTraceID(c)
+	logger := h.getLoggerWithTraceID(c)
 	
 	// 使用长文本 TTS 服务进行合成
 	synthStart := time.Now()
@@ -530,11 +533,11 @@ func (h *TTSHandler) handleOptimizedSegmentedTTS(c *gin.Context, req models.TTSR
 		errType := classifyUpstreamError(err, statusCode)
 		detailedMsg := getDetailedErrorMessage(errType, err)
 		
-		logger.WithFields(logrus.Fields{
-			"error_type":     errType,
-			"original_error": err,
-			"status_code":    statusCode,
-		}).Error("优化的分段TTS合成失败")
+		logger.Error().
+			Int("error_type", int(errType)).
+			Err(err).
+			Int("status_code", statusCode).
+			Msg("优化的分段TTS合成失败")
 		
 		_ = c.Error(fmt.Errorf("%w: %s", custom_errors.ErrUpstreamServiceFailed, detailedMsg))
 		return
@@ -542,29 +545,29 @@ func (h *TTSHandler) handleOptimizedSegmentedTTS(c *gin.Context, req models.TTSR
 	
 	// 获取工作池统计信息
 	stats := h.longTextService.GetStats()
-	logger.WithFields(logrus.Fields{
-		"total_jobs":     stats.TotalJobs,
-		"completed_jobs": stats.CompletedJobs,
-		"failed_jobs":    stats.FailedJobs,
-		"success_rate":   fmt.Sprintf("%.2f%%", stats.SuccessRate),
-		"active_workers": stats.ActiveWorkers,
-	}).Info("工作池统计")
+	logger.Info().
+		Int64("total_jobs", stats.TotalJobs).
+		Int64("completed_jobs", stats.CompletedJobs).
+		Int64("failed_jobs", stats.FailedJobs).
+		Str("success_rate", fmt.Sprintf("%.2f%%", stats.SuccessRate)).
+		Int("active_workers", stats.ActiveWorkers).
+		Msg("工作池统计")
 	
 	// 设置响应
 	c.Header("Content-Type", "audio/mpeg")
 	writeStart := time.Now()
 	if _, err := c.Writer.Write(resp.AudioContent); err != nil {
-		logger.WithError(err).Error("写入响应失败")
+		logger.Error().Err(err).Msg("写入响应失败")
 		return
 	}
 	writeTime := time.Since(writeStart)
 	
 	// 记录总耗时
 	totalTime := time.Since(startTime)
-	logger.WithFields(logrus.Fields{
-		"total_time":   totalTime,
-		"synth_time":   synthTime,
-		"write_time":   writeTime,
-		"audio_size":   formatFileSize(len(resp.AudioContent)),
-	}).Info("优化的分段TTS请求总耗时")
+	logger.Info().
+		Dur("total_time", totalTime).
+		Dur("synth_time", synthTime).
+		Dur("write_time", writeTime).
+		Str("audio_size", formatFileSize(len(resp.AudioContent))).
+		Msg("优化的分段TTS请求总耗时")
 }

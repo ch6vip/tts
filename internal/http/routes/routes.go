@@ -11,10 +11,11 @@ import (
 	"tts/web"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog"
 )
 
 // SetupRoutes 配置所有API路由
-func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error) {
+func SetupRoutes(cfg *config.Config, ttsService tts.Service, logger zerolog.Logger) (*gin.Engine, error) {
 	// 创建Gin路由
 	router := gin.New()
 
@@ -44,10 +45,11 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 			FFmpegPath:       cfg.TTS.LongText.FFmpegPath,
 			UseSmartSegment:  cfg.TTS.LongText.UseSmartSegment,
 		},
+		logger,
 	)
 
 	// 创建处理器
-	ttsHandler := handlers.NewTTSHandler(ttsService, longTextService, cfg)
+	ttsHandler := handlers.NewTTSHandler(ttsService, longTextService, cfg, logger)
 	voicesHandler := handlers.NewVoicesHandler(ttsService)
 	metricsHandler := handlers.NewMetricsHandler()
 
@@ -60,7 +62,7 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 	// 应用中间件
 	router.Use(middleware.Logger()) // 日志中间件
 	router.Use(middleware.CORS())      // CORS中间件
-	router.Use(middleware.ErrorHandler()) // 错误处理中间件
+	router.Use(middleware.ErrorHandler(logger)) // 错误处理中间件
 
 	// 应用基础路径前缀
 	var baseRouter gin.IRoutes
@@ -108,9 +110,9 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service) (*gin.Engine, error
 }
 
 // InitializeServices 初始化所有服务
-func InitializeServices(cfg *config.Config) (tts.Service, error) {
+func InitializeServices(cfg *config.Config, logger zerolog.Logger) (tts.Service, error) {
 	// 创建Microsoft TTS客户端
-	ttsClient := microsoft.NewClient(cfg)
+	ttsClient := microsoft.NewClient(cfg, logger)
 
 	return ttsClient, nil
 }

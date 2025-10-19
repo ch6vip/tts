@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 	"tts/internal/config"
 	"tts/internal/http/routes"
 	"tts/internal/tts"
@@ -19,29 +19,31 @@ type App struct {
 	server     *Server
 	cfg        *config.Config
 	ttsService tts.Service
+	logger     zerolog.Logger
 }
 
 // NewApp 创建一个新的应用程序实例
-func NewApp(cfg *config.Config) (*App, error) {
+func NewApp(cfg *config.Config, logger zerolog.Logger) (*App, error) {
 	// 初始化服务
-	ttsService, err := routes.InitializeServices(cfg)
+	ttsService, err := routes.InitializeServices(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("初始化服务失败: %w", err)
 	}
 
 	// 如果启用了缓存，则包装原始服务
 	if cfg.Cache.Enabled {
-		logrus.Info("启用TTS缓存")
+		logger.Info().Msg("启用TTS缓存")
 		ttsService = tts.NewCachingService(
 			ttsService,
 			time.Duration(cfg.Cache.ExpirationMinutes)*time.Minute,
 			time.Duration(cfg.Cache.CleanupIntervalMinutes)*time.Minute,
+			logger,
 			cfg.Cache.MaxTotalSize,
 		)
 	}
 
 	// 设置Gin路由
-	router, err := routes.SetupRoutes(cfg, ttsService)
+	router, err := routes.SetupRoutes(cfg, ttsService, logger)
 	if err != nil {
 		return nil, fmt.Errorf("设置路由失败: %w", err)
 	}
@@ -53,6 +55,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		server:     server,
 		cfg:        cfg,
 		ttsService: ttsService,
+		logger:     logger,
 	}, nil
 }
 
@@ -67,7 +70,7 @@ func (a *App) Start() error {
 
 	// 在一个goroutine中启动服务器
 	go func() {
-		logrus.Infof("启动TTS服务，监听端口 %d...", a.cfg.Server.Port)
+		a.logger.Info().Int("port", a.cfg.Server.Port).Msg("启动TTS服务，监听端口")
 		errChan <- a.server.Start()
 	}()
 
@@ -82,16 +85,16 @@ func (a *App) Start() error {
 
 		// 尝试优雅关闭服务器
 		if err := a.server.Shutdown(ctx); err != nil {
-			logrus.Errorf("服务器关闭出错: %v", err)
+			a.logger.Error().Err(err).Msg("服务器关闭出错")
 		}
 
 		// 关闭 TTS 服务（例如，关闭 worker pool）
 		if closer, ok := a.ttsService.(interface{ Close() }); ok {
-			logrus.Info("正在关闭 TTS 服务...")
+			a.logger.Info().Msg("正在关闭 TTS 服务...")
 			closer.Close()
 		}
 
-		logrus.Info("服务器已优雅关闭")
+		a.logger.Info().Msg("服务器已优雅关闭")
 		return nil
 	}
 }

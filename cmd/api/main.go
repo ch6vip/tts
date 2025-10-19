@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 	"tts/internal/config"
 	"tts/internal/http/middleware"
 	"tts/internal/http/server"
@@ -15,28 +15,14 @@ import (
 
 // initLog 初始化日志记录器
 func initLog(logConfig *config.LogConfig) {
-	// 初始化 logrus（保持向后兼容）
-	if logConfig.Format == "json" {
-		logrus.SetFormatter(&logrus.JSONFormatter{})
-	} else {
-		logrus.SetFormatter(&logrus.TextFormatter{
-			FullTimestamp: true,
-		})
-	}
-
-	// 设置 logrus 日志级别
-	level, err := logrus.ParseLevel(logConfig.Level)
-	if err != nil {
-		logrus.WithError(err).Warnf("无效的日志级别 '%s'，回退到 'info'", logConfig.Level)
-		level = logrus.InfoLevel
-	}
-	logrus.SetLevel(level)
-
-	// 设置 logrus 日志输出
-	logrus.SetOutput(os.Stdout)
-	
 	// 初始化 zerolog（高性能日志）
 	middleware.InitZerologWithConfig(logConfig)
+}
+
+// getLogger 获取全局 zerolog 实例
+func getLogger() *zerolog.Logger {
+	logger := middleware.GetLogger()
+	return &logger
 }
 
 // findProjectRoot 向上遍历目录以查找 go.mod 文件，从而确定项目根目录。
@@ -75,7 +61,7 @@ func main() {
 			path := filepath.Join(root, "configs", "config.yaml")
 			if _, err := os.Stat(path); err == nil {
 				foundPath = path
-				logrus.Debugf("在项目根目录找到配置文件: %s", path)
+				getLogger().Debug().Str("path", path).Msg("在项目根目录找到配置文件")
 			}
 		}
 
@@ -84,13 +70,13 @@ func main() {
 			path := "/etc/tts/config.yaml"
 			if _, err := os.Stat(path); err == nil {
 				foundPath = path
-				logrus.Debugf("在系统路径找到配置文件: %s", path)
+				getLogger().Debug().Str("path", path).Msg("在系统路径找到配置文件")
 			}
 		}
 
 		// 3. 如果找不到外部配置文件，将使用嵌入的默认配置
 		if foundPath == "" {
-			logrus.Info("未找到外部配置文件，将使用嵌入的默认配置")
+			getLogger().Info().Msg("未找到外部配置文件，将使用嵌入的默认配置")
 			*configPath = ""
 		} else {
 			*configPath = foundPath
@@ -103,33 +89,33 @@ func main() {
 		var err error
 		absConfigPath, err = filepath.Abs(*configPath)
 		if err != nil {
-			logrus.Fatalf("无法获取配置文件的绝对路径: %v", err)
+			getLogger().Fatal().Err(err).Msg("无法获取配置文件的绝对路径")
 		}
 	}
 
 	// 加载配置（如果找不到外部配置文件，将自动回退到嵌入的默认配置）
 	cfg, err := config.Load(absConfigPath)
 	if err != nil {
-		logrus.Fatalf("无法加载配置: %v", err)
+		getLogger().Fatal().Err(err).Msg("无法加载配置")
 	}
 
 	// 初始化日志
 	initLog(&cfg.Log)
 
 	if absConfigPath != "" {
-		logrus.Infof("使用配置文件: %s", absConfigPath)
+		getLogger().Info().Str("path", absConfigPath).Msg("使用配置文件")
 	} else {
-		logrus.Info("使用嵌入的默认配置")
+		getLogger().Info().Msg("使用嵌入的默认配置")
 	}
 
 	// 创建并启动应用
-	app, err := server.NewApp(cfg)
+	app, err := server.NewApp(cfg, *getLogger())
 	if err != nil {
-		logrus.Fatalf("初始化应用失败: %v", err)
+		getLogger().Fatal().Err(err).Msg("初始化应用失败")
 	}
 
 	// 启动应用并处理错误
 	if err := app.Start(); err != nil {
-		logrus.Fatalf("应用运行出错: %v", err)
+		getLogger().Fatal().Err(err).Msg("应用运行出错")
 	}
 }

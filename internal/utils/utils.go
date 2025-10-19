@@ -15,11 +15,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 )
 
 var (
-	log    = logrus.New()
 	client = &http.Client{}
 )
 
@@ -46,6 +45,11 @@ func generateUserID() string {
 
 // GetEndpoint 获取语音合成服务的端点信息
 func GetEndpoint() (map[string]interface{}, error) {
+	return GetEndpointWithLogger(zerolog.Nop())
+}
+
+// GetEndpointWithLogger 获取语音合成服务的端点信息（带日志记录器）
+func GetEndpointWithLogger(logger zerolog.Logger) (map[string]interface{}, error) {
 	signature := Sign(endpointURL)
 	userId := generateUserID()
 	traceId := uuid.New().String()
@@ -77,14 +81,14 @@ func GetEndpoint() (map[string]interface{}, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Error("failed to do request: ", err)
+		logger.Error().Err(err).Msg("failed to do request")
 		return nil, err
 	}
 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Error("failed to get endpoint, status code: ", resp.StatusCode)
+		logger.Error().Int("status_code", resp.StatusCode).Msg("failed to get endpoint")
 		return nil, fmt.Errorf("failed to get endpoint, status code: %d", resp.StatusCode)
 	}
 
