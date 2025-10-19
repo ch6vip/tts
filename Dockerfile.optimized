@@ -79,7 +79,7 @@ LABEL maintainer="ch6vip@gmail.com" \
 COPY --from=builder /app/main /app/main
 
 # 复制 FFmpeg 二进制文件到最终镜像
-COPY --from=builder /usr/local/bin/ffmpeg /usr/bin/ffmpeg
+COPY --from=builder /usr/bin/ffmpeg /usr/bin/ffmpeg
 
 # 注意: gcr.io/distroless/static 镜像已包含 CA 证书和时区数据
 # 不需要从构建阶段复制这些文件
