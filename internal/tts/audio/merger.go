@@ -60,6 +60,15 @@ func (m *FFmpegMerger) Merge(segments [][]byte) ([]byte, error) {
 
 // mergeWithPipe 使用管道方式合并音频，避免磁盘 I/O
 func (m *FFmpegMerger) mergeWithPipe(segments [][]byte) ([]byte, error) {
+	// 处理边界条件
+	if len(segments) == 0 {
+		return nil, errors.New("no segments to merge")
+	}
+	
+	if len(segments) == 1 {
+		return segments[0], nil
+	}
+	
 	// 对于两个片段的情况，使用 concat filter
 	if len(segments) == 2 {
 		return m.mergeTwoSegments(segments[0], segments[1])
@@ -291,6 +300,16 @@ func (s *StreamMerger) MergeToWriter(segments [][]byte, writer io.Writer) error 
 
 // mergeToWriterWithPipe 使用管道递归合并音频到 Writer
 func (s *StreamMerger) mergeToWriterWithPipe(segments [][]byte, writer io.Writer) error {
+	// 处理边界条件
+	if len(segments) == 0 {
+		return errors.New("no segments to merge")
+	}
+	
+	if len(segments) == 1 {
+		_, err := writer.Write(segments[0])
+		return err
+	}
+	
 	// 对于两个片段的情况，直接合并到 writer
 	if len(segments) == 2 {
 		return s.mergeTwoSegmentsToWriter(segments[0], segments[1], writer)
