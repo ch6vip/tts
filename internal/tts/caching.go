@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -98,15 +97,29 @@ func (s *cachingService) SynthesizeSpeech(ctx context.Context, req models.TTSReq
 	currentSize := atomic.LoadInt64(&s.totalSize)
 	responseSize := int64(len(resp.AudioContent))
 	
-	// 如果设置了最大限制且添加此项会超过限制，则不缓存
+	// 如果设置了最大限制且添加此项会超过限制，尝试驱逐旧缓存项
 	if s.maxTotalSize > 0 && (currentSize+responseSize) > s.maxTotalSize {
 		s.logger.Debug().
 			Str("key", key).
 			Int64("current_size", currentSize).
 			Int64("response_size", responseSize).
 			Int64("max_size", s.maxTotalSize).
-			Msg("Skipping cache due to size limit")
-		return resp, nil
+			Msg("Cache size limit reached, attempting to evict old items")
+		
+		// 尝试驱逐缓存项以腾出空间
+		spaceNeeded := (currentSize + responseSize) - s.maxTotalSize
+		if s.evictCacheItems(spaceNeeded) {
+			// 驱逐成功，继续缓存
+			s.logger.Debug().
+				Int64("space_freed", spaceNeeded).
+				Msg("Successfully evicted cache items")
+		} else {
+			// 驱逐失败或无法腾出足够空间，跳过缓存
+			s.logger.Debug().
+				Str("key", key).
+				Msg("Unable to free enough space, skipping cache")
+			return resp, nil
+		}
 	}
 	
 	s.cache.Set(key, resp, cache.DefaultExpiration)
@@ -117,15 +130,74 @@ func (s *cachingService) SynthesizeSpeech(ctx context.Context, req models.TTSReq
 	return resp, nil
 }
 
-// cacheKeyData 表示用于生成缓存键的核心参数
-type cacheKeyData struct {
-	Mode   string `json:"mode"`   // "text" 或 "ssml"
-	Content string `json:"content"` // 文本内容或SSML内容
-	Voice  string `json:"voice"`  // 语音ID
-	Rate   string `json:"rate"`   // 语速
-	Pitch  string `json:"pitch"`  // 音调
-	Style  string `json:"style"`  // 风格
-	Format string `json:"format"` // 音频格式
+// evictCacheItems 尝试驱逐足够的缓存项以腾出指定的空间
+// 返回 true 表示成功腾出足够空间，false 表示失败
+func (s *cachingService) evictCacheItems(spaceNeeded int64) bool {
+	items := s.cache.Items()
+	if len(items) == 0 {
+		return false
+	}
+	
+	// 将缓存项转换为切片以便排序
+	type cacheItem struct {
+		key        string
+		expiration int64
+		size       int64
+	}
+	
+	itemList := make([]cacheItem, 0, len(items))
+	for k, v := range items {
+		if resp, ok := v.Object.(*models.TTSResponse); ok {
+			itemList = append(itemList, cacheItem{
+				key:        k,
+				expiration: v.Expiration,
+				size:       int64(len(resp.AudioContent)),
+			})
+		}
+	}
+	
+	if len(itemList) == 0 {
+		return false
+	}
+	
+	// 按过期时间排序（最早过期的在前面）
+	// 如果过期时间相同，按大小排序（大的在前面，优先删除大项）
+	for i := 0; i < len(itemList)-1; i++ {
+		for j := i + 1; j < len(itemList); j++ {
+			if itemList[i].expiration > itemList[j].expiration ||
+				(itemList[i].expiration == itemList[j].expiration && itemList[i].size < itemList[j].size) {
+				itemList[i], itemList[j] = itemList[j], itemList[i]
+			}
+		}
+	}
+	
+	// 逐个删除缓存项，直到腾出足够空间
+	var freedSpace int64
+	evictedCount := 0
+	
+	for _, item := range itemList {
+		if freedSpace >= spaceNeeded {
+			break
+		}
+		
+		s.cache.Delete(item.key)
+		freedSpace += item.size
+		evictedCount++
+		
+		s.logger.Debug().
+			Str("key", item.key).
+			Int64("size", item.size).
+			Int64("freed_space", freedSpace).
+			Msg("Evicted cache item")
+	}
+	
+	s.logger.Info().
+		Int("evicted_count", evictedCount).
+		Int64("space_needed", spaceNeeded).
+		Int64("space_freed", freedSpace).
+		Msg("Cache eviction completed")
+	
+	return freedSpace >= spaceNeeded
 }
 
 // normalizeValue 标准化参数值，去除前后空格并转换为小写
@@ -134,52 +206,8 @@ func normalizeValue(value string) string {
 }
 
 // generateCacheKey 创建一个标准化的缓存键，只包含影响TTS输出的核心参数
+// 使用直接字段拼接和哈希的方式，消除JSON序列化的CPU开销
 func (s *cachingService) generateCacheKey(req models.TTSRequest) string {
-	// 获取音频格式，优先使用请求中指定的格式，否则使用默认格式
-	cfg := config.Get()
-	format := req.Format
-	if format == "" {
-		format = cfg.TTS.DefaultFormat
-	}
-	
-	// 创建缓存键数据结构
-	keyData := cacheKeyData{
-		Format: normalizeValue(format),
-	}
-	
-	// 根据是否有 SSML 使用不同的模式
-	if req.SSML != "" {
-		keyData.Mode = "ssml"
-		keyData.Content = normalizeValue(req.SSML)
-		keyData.Voice = normalizeValue(req.Voice)
-		// SSML模式下，语速、音调和风格通常在SSML中定义，但为了保持一致性，
-		// 如果请求中提供了这些参数，也包含在缓存键中
-		keyData.Rate = normalizeValue(req.Rate)
-		keyData.Pitch = normalizeValue(req.Pitch)
-		keyData.Style = normalizeValue(req.Style)
-	} else {
-		keyData.Mode = "text"
-		keyData.Content = normalizeValue(req.Text)
-		keyData.Voice = normalizeValue(req.Voice)
-		keyData.Rate = normalizeValue(req.Rate)
-		keyData.Pitch = normalizeValue(req.Pitch)
-		keyData.Style = normalizeValue(req.Style)
-	}
-	
-	// 将结构体序列化为JSON，确保字段顺序一致
-	jsonData, err := json.Marshal(keyData)
-	if err != nil {
-		// 如果序列化失败，使用备用方法
-		return s.generateLegacyCacheKey(req)
-	}
-	
-	// 使用SHA256计算哈希值
-	hash := sha256.Sum256(jsonData)
-	return hex.EncodeToString(hash[:])
-}
-
-// generateLegacyCacheKey 备用缓存键生成方法，保持与旧版本的兼容性
-func (s *cachingService) generateLegacyCacheKey(req models.TTSRequest) string {
 	hash := sha256.New()
 	
 	// 获取音频格式，优先使用请求中指定的格式，否则使用默认格式
@@ -189,20 +217,26 @@ func (s *cachingService) generateLegacyCacheKey(req models.TTSRequest) string {
 		format = cfg.TTS.DefaultFormat
 	}
 	
-	// 根据是否有 SSML 使用不同的键
+	// 根据是否有 SSML 使用不同的模式，包含所有关键字段
 	if req.SSML != "" {
-		hash.Write([]byte("ssml:"))
+		// SSML 模式
+		hash.Write([]byte("mode:ssml"))
+		hash.Write([]byte("|content:"))
 		hash.Write([]byte(normalizeValue(req.SSML)))
-		
-		if req.Voice != "" {
-			hash.Write([]byte("|voice:"))
-			hash.Write([]byte(normalizeValue(req.Voice)))
-		}
-		
+		hash.Write([]byte("|voice:"))
+		hash.Write([]byte(normalizeValue(req.Voice)))
+		hash.Write([]byte("|rate:"))
+		hash.Write([]byte(normalizeValue(req.Rate)))
+		hash.Write([]byte("|pitch:"))
+		hash.Write([]byte(normalizeValue(req.Pitch)))
+		hash.Write([]byte("|style:"))
+		hash.Write([]byte(normalizeValue(req.Style)))
 		hash.Write([]byte("|format:"))
 		hash.Write([]byte(normalizeValue(format)))
 	} else {
-		hash.Write([]byte("text:"))
+		// 文本模式
+		hash.Write([]byte("mode:text"))
+		hash.Write([]byte("|content:"))
 		hash.Write([]byte(normalizeValue(req.Text)))
 		hash.Write([]byte("|voice:"))
 		hash.Write([]byte(normalizeValue(req.Voice)))
@@ -212,7 +246,6 @@ func (s *cachingService) generateLegacyCacheKey(req models.TTSRequest) string {
 		hash.Write([]byte(normalizeValue(req.Pitch)))
 		hash.Write([]byte("|style:"))
 		hash.Write([]byte(normalizeValue(req.Style)))
-		
 		hash.Write([]byte("|format:"))
 		hash.Write([]byte(normalizeValue(format)))
 	}
