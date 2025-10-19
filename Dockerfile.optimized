@@ -33,21 +33,17 @@ COPY . .
 # 安装必要的工具
 RUN apk add --no-cache curl xz
 
-# 下载 FFmpeg 静态二进制文件
-# 使用 John Van Sickle 的静态构建版本，支持多种架构
+# 下载并安装 FFmpeg 静态二进制文件
 ARG TARGETARCH
-RUN if [ "${TARGETARCH}" = "amd64" ]; then \
-        ARCH="amd64"; \
-    elif [ "${TARGETARCH}" = "arm64" ]; then \
-        ARCH="arm64"; \
-    else \
-        echo "Unsupported architecture: ${TARGETARCH}" && exit 1; \
-    fi && \
+RUN case "${TARGETARCH}" in \
+        amd64) ARCH="amd64" ;; \
+        arm64) ARCH="arm64" ;; \
+        *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
     curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${ARCH}-static.tar.xz" -o ffmpeg.tar.xz && \
-    tar -xJf ffmpeg.tar.xz && \
-    mv ffmpeg-*/ffmpeg /usr/local/bin/ffmpeg && \
+    tar -xJf ffmpeg.tar.xz --strip-components=1 -C /usr/local/bin ffmpeg && \
     chmod +x /usr/local/bin/ffmpeg && \
-    rm -rf ffmpeg.tar.xz ffmpeg-*
+    rm -rf ffmpeg.tar.xz
 
 # 设置 FFmpeg 路径环境变量
 ENV FFMPEG_PATH=/usr/local/bin/ffmpeg
@@ -69,14 +65,20 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     ./cmd/api
 
 # ============================================
-# 阶段 3: 最终运行镜像 (使用 scratch)
-# 
+# 阶段 3: 最终运行镜像 (使用 distroless/static)
+#
 # 镜像选择对比:
 # - scratch: 最小 (~0 MB),但缺少 CA 证书、时区数据等
 # - alpine: 小 (~5 MB),但包含不必要的 shell 和工具
 # - distroless/static: 最佳选择 (~2 MB),包含必要的运行时库、CA 证书、时区数据
 # - distroless/base: 较大 (~20 MB),包含 glibc,不适合静态链接的 Go 程序
-FROM scratch
+#
+# 使用 distroless/static 的优势:
+# 1. 已包含 CA 证书，支持 HTTPS 请求
+# 2. 已包含时区数据，支持时区设置
+# 3. 不包含 shell 和调试工具，安全性更高
+# 4. 镜像体积小，启动快
+FROM gcr.io/distroless/static
 
 # 设置标签
 LABEL maintainer="your-email@example.com" \
@@ -90,17 +92,15 @@ COPY --from=builder /app/main /app/main
 # 复制 FFmpeg 二进制文件到最终镜像
 COPY --from=builder /usr/local/bin/ffmpeg /usr/bin/ffmpeg
 
-# 复制 CA 证书 (如果需要 HTTPS 请求)
-# 从 alpine 镜像复制 CA 证书
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-# 复制时区数据 (如果需要)
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+# 注意: gcr.io/distroless/static 镜像已包含 CA 证书和时区数据
+# 不需要从构建阶段复制这些文件
+# CA 证书位置: /etc/ssl/certs/ca-certificates.crt (已包含)
+# 时区数据位置: /usr/share/zoneinfo (已包含)
 
 # 设置工作目录
 WORKDIR /app
 
-# 设置时区环境变量
+# 设置时区环境变量 (distroless/static 已包含时区数据)
 ENV TZ=Asia/Shanghai
 
 # 设置 FFmpeg 路径环境变量

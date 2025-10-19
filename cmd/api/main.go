@@ -8,12 +8,14 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"tts/internal/config"
+	"tts/internal/http/middleware"
 	"tts/internal/http/server"
 )
 
+
 // initLog 初始化日志记录器
 func initLog(logConfig *config.LogConfig) {
-	// 设置日志格式
+	// 初始化 logrus（保持向后兼容）
 	if logConfig.Format == "json" {
 		logrus.SetFormatter(&logrus.JSONFormatter{})
 	} else {
@@ -22,7 +24,7 @@ func initLog(logConfig *config.LogConfig) {
 		})
 	}
 
-	// 设置日志级别
+	// 设置 logrus 日志级别
 	level, err := logrus.ParseLevel(logConfig.Level)
 	if err != nil {
 		logrus.WithError(err).Warnf("无效的日志级别 '%s'，回退到 'info'", logConfig.Level)
@@ -30,8 +32,11 @@ func initLog(logConfig *config.LogConfig) {
 	}
 	logrus.SetLevel(level)
 
-	// 设置日志输出
+	// 设置 logrus 日志输出
 	logrus.SetOutput(os.Stdout)
+	
+	// 初始化 zerolog（高性能日志）
+	middleware.InitZerologWithConfig(logConfig)
 }
 
 // findProjectRoot 向上遍历目录以查找 go.mod 文件，从而确定项目根目录。
