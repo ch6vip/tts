@@ -97,7 +97,7 @@ func TestLoggerWithError(t *testing.T) {
 	// 添加一个测试路由，会返回错误
 	router.GET("/error", func(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "error")
-		c.Error(errors.New("test error"))
+		_ = c.Error(errors.New("test error"))
 	})
 
 	// 创建一个测试请求
