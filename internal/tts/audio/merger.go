@@ -148,12 +148,16 @@ func (m *FFmpegMerger) mergeTwoSegments(seg1, seg2 []byte) ([]byte, error) {
 	
 	// 等待写入完成
 	if err := <-errChan1; err != nil {
-		cmd.Process.Kill()
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			m.logger.Warn().Err(killErr).Msg("Failed to kill ffmpeg process")
+		}
 		return nil, fmt.Errorf("failed to write first segment: %w", err)
 	}
 	
 	if err := <-errChan2; err != nil {
-		cmd.Process.Kill()
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			m.logger.Warn().Err(killErr).Msg("Failed to kill ffmpeg process")
+		}
 		return nil, fmt.Errorf("failed to write second segment: %w", err)
 	}
 	
@@ -375,12 +379,16 @@ func (s *StreamMerger) mergeTwoSegmentsToWriter(seg1, seg2 []byte, writer io.Wri
 	
 	// 等待写入完成
 	if err := <-errChan1; err != nil {
-		cmd.Process.Kill()
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			s.logger.Warn().Err(killErr).Msg("Failed to kill ffmpeg process")
+		}
 		return fmt.Errorf("failed to write first segment: %w", err)
 	}
 	
 	if err := <-errChan2; err != nil {
-		cmd.Process.Kill()
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			s.logger.Warn().Err(killErr).Msg("Failed to kill ffmpeg process")
+		}
 		return fmt.Errorf("failed to write second segment: %w", err)
 	}
 	
