@@ -23,11 +23,12 @@ type CacheStats struct {
 
 // cachingService is a struct that wraps a tts.Service to add a caching layer.
 type cachingService struct {
-	next       Service
-	cache      *cache.Cache
-	hits       int64 // 缓存命中次数
-	misses     int64 // 缓存未命中次数
-	totalSize  int64 // 缓存总大小(字节)
+	next         Service
+	cache        *cache.Cache
+	hits         int64 // 缓存命中次数
+	misses       int64 // 缓存未命中次数
+	totalSize    int64 // 缓存总大小(字节)
+	maxTotalSize int64 // 缓存最大总大小限制(字节)，0表示不限制
 }
 
 // GetUnderlyingService returns the underlying service wrapped by the cache.
@@ -36,11 +37,27 @@ func (s *cachingService) GetUnderlyingService() Service {
 }
 
 // NewCachingService creates a new caching service.
-func NewCachingService(next Service, defaultExpiration, cleanupInterval time.Duration) Service {
-	return &cachingService{
-		next:  next,
-		cache: cache.New(defaultExpiration, cleanupInterval),
+// maxTotalSize 参数是可选的，默认为0表示不限制缓存大小
+func NewCachingService(next Service, defaultExpiration, cleanupInterval time.Duration, maxTotalSize ...int64) Service {
+	var maxSize int64 = 0 // 默认不限制
+	if len(maxTotalSize) > 0 {
+		maxSize = maxTotalSize[0]
 	}
+	
+	c := &cachingService{
+		next:         next,
+		cache:        cache.New(defaultExpiration, cleanupInterval),
+		maxTotalSize: maxSize,
+	}
+	
+	// 设置缓存项被删除时的回调函数，用于更新总大小统计
+	c.cache.OnEvicted(func(key string, value interface{}) {
+		if resp, ok := value.(*models.TTSResponse); ok {
+			atomic.AddInt64(&c.totalSize, -int64(len(resp.AudioContent)))
+		}
+	})
+	
+	return c
 }
 
 // ListVoices forwards the call to the next service without caching.
@@ -72,10 +89,25 @@ func (s *cachingService) SynthesizeSpeech(ctx context.Context, req models.TTSReq
 	}
 
 	// Store the successful response in the cache.
+	// 首先检查是否超过最大缓存大小限制
+	currentSize := atomic.LoadInt64(&s.totalSize)
+	responseSize := int64(len(resp.AudioContent))
+	
+	// 如果设置了最大限制且添加此项会超过限制，则不缓存
+	if s.maxTotalSize > 0 && (currentSize+responseSize) > s.maxTotalSize {
+		logrus.WithFields(logrus.Fields{
+			"key":          key,
+			"current_size": currentSize,
+			"response_size": responseSize,
+			"max_size":     s.maxTotalSize,
+		}).Debug("Skipping cache due to size limit")
+		return resp, nil
+	}
+	
 	s.cache.Set(key, resp, cache.DefaultExpiration)
 	
 	// 更新缓存大小统计
-	atomic.AddInt64(&s.totalSize, int64(len(resp.AudioContent)))
+	atomic.AddInt64(&s.totalSize, responseSize)
 
 	return resp, nil
 }

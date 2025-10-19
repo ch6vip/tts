@@ -30,6 +30,28 @@ COPY go.mod go.sum ./
 # 复制源代码
 COPY . .
 
+# 安装必要的工具
+RUN apk add --no-cache curl xz
+
+# 下载 FFmpeg 静态二进制文件
+# 使用 John Van Sickle 的静态构建版本，支持多种架构
+ARG TARGETARCH
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+        ARCH="amd64"; \
+    elif [ "${TARGETARCH}" = "arm64" ]; then \
+        ARCH="arm64"; \
+    else \
+        echo "Unsupported architecture: ${TARGETARCH}" && exit 1; \
+    fi && \
+    curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${ARCH}-static.tar.xz" -o ffmpeg.tar.xz && \
+    tar -xJf ffmpeg.tar.xz && \
+    mv ffmpeg-*/ffmpeg /usr/local/bin/ffmpeg && \
+    chmod +x /usr/local/bin/ffmpeg && \
+    rm -rf ffmpeg.tar.xz ffmpeg-*
+
+# 设置 FFmpeg 路径环境变量
+ENV FFMPEG_PATH=/usr/local/bin/ffmpeg
+
 # 构建应用程序
 # CGO_ENABLED=0: 禁用 CGO,生成纯静态二进制
 # -ldflags 参数说明:
@@ -38,7 +60,6 @@ COPY . .
 #   -trimpath: 去除文件系统路径
 ARG VERSION=dev
 ARG BUILD_TIME
-ARG TARGETARCH
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build \
@@ -67,6 +88,9 @@ LABEL maintainer="your-email@example.com" \
 # 使用 --chown 确保文件所有权正确 (nonroot:nonroot = 65532:65532)
 COPY --from=builder --chown=nonroot:nonroot /app/main /app/main
 
+# 复制 FFmpeg 二进制文件到最终镜像
+COPY --from=builder --chown=nonroot:nonroot /usr/local/bin/ffmpeg /usr/bin/ffmpeg
+
 # 复制配置文件 (确保不包含敏感信息)
 # 生产环境应该通过环境变量或挂载卷提供配置
 COPY --chown=nonroot:nonroot configs /app/configs
@@ -76,6 +100,9 @@ WORKDIR /app
 
 # 设置时区环境变量
 ENV TZ=Asia/Shanghai
+
+# 设置 FFmpeg 路径环境变量
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
 
 # 暴露端口 (使用非特权端口)
 EXPOSE 8080

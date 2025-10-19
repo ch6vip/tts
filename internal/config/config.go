@@ -30,9 +30,10 @@ type LogConfig struct {
 
 // CacheConfig 包含缓存配置
 type CacheConfig struct {
-	Enabled                bool `mapstructure:"enabled"`
-	ExpirationMinutes      int  `mapstructure:"expiration_minutes"`
-	CleanupIntervalMinutes int  `mapstructure:"cleanup_interval_minutes"`
+	Enabled                bool  `mapstructure:"enabled"`
+	ExpirationMinutes      int   `mapstructure:"expiration_minutes"`
+	CleanupIntervalMinutes int   `mapstructure:"cleanup_interval_minutes"`
+	MaxTotalSize           int64 `mapstructure:"max_total_size"` // 缓存最大总大小(字节)，0表示不限制
 }
 
 // OpenAIConfig 包含OpenAI API配置

@@ -50,3 +50,4 @@ cache:
   enabled: true
   expiration_minutes: 1440 # 缓存过期时间（分钟），1天
   cleanup_interval_minutes: 1440 # 缓存清理间隔（分钟），1天
+  max_total_size: 0 # 缓存最大总大小（字节），0表示不限制，例如 1073741824 表示 1GB

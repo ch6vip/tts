@@ -36,6 +36,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 			ttsService,
 			time.Duration(cfg.Cache.ExpirationMinutes)*time.Minute,
 			time.Duration(cfg.Cache.CleanupIntervalMinutes)*time.Minute,
+			cfg.Cache.MaxTotalSize,
 		)
 	}
 
