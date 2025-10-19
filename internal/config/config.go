@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/spf13/viper"
+	"tts/configs"
 )
 
 // Config 包含应用程序的所有配置
@@ -84,7 +85,7 @@ var (
 	loadErr    error
 )
 
-// Load 从指定路径加载配置文件
+// Load 从指定路径加载配置文件，如果找不到则使用嵌入的默认配置
 func Load(configPath string) (*Config, error) {
 	configOnce.Do(func() {
 		v := viper.New()
@@ -95,13 +96,25 @@ func Load(configPath string) (*Config, error) {
 		v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 		v.AutomaticEnv() // 自动绑定环境变量
 
-		// 从配置文件加载
+		// 尝试从配置文件加载
+		configLoaded := false
 		if configPath != "" {
 			v.SetConfigFile(configPath)
-			if loadErr = v.ReadInConfig(); loadErr != nil {
-				loadErr = fmt.Errorf("加载配置文件失败: %w", loadErr)
+			if err := v.ReadInConfig(); err != nil {
+				// 配置文件加载失败，尝试使用嵌入的默认配置
+				fmt.Printf("警告: 无法加载配置文件 %s: %v，将使用嵌入的默认配置\n", configPath, err)
+			} else {
+				configLoaded = true
+			}
+		}
+
+		// 如果没有从文件加载配置，则使用嵌入的默认配置
+		if !configLoaded {
+			if err := v.ReadConfig(bytes.NewReader(configs.DefaultConfig)); err != nil {
+				loadErr = fmt.Errorf("读取嵌入的默认配置失败: %w", err)
 				return
 			}
+			fmt.Println("使用嵌入的默认配置")
 		}
 
 		// 将配置绑定到结构体

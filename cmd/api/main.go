@@ -83,20 +83,26 @@ func main() {
 			}
 		}
 
-		// 3. 如果仍然找不到，则终止程序
+		// 3. 如果找不到外部配置文件，将使用嵌入的默认配置
 		if foundPath == "" {
-			logrus.Fatalf("未找到配置文件。请使用 -config 参数指定路径，或确保 'configs/config.yaml' 位于项目根目录，或 '/etc/tts/config.yaml' 存在。")
+			logrus.Info("未找到外部配置文件，将使用嵌入的默认配置")
+			*configPath = ""
+		} else {
+			*configPath = foundPath
 		}
-		*configPath = foundPath
 	}
 
-	// 确保配置文件路径是绝对路径
-	absConfigPath, err := filepath.Abs(*configPath)
-	if err != nil {
-		logrus.Fatalf("无法获取配置文件的绝对路径: %v", err)
+	var absConfigPath string
+	if *configPath != "" {
+		// 确保配置文件路径是绝对路径
+		var err error
+		absConfigPath, err = filepath.Abs(*configPath)
+		if err != nil {
+			logrus.Fatalf("无法获取配置文件的绝对路径: %v", err)
+		}
 	}
 
-	// 加载配置
+	// 加载配置（如果找不到外部配置文件，将自动回退到嵌入的默认配置）
 	cfg, err := config.Load(absConfigPath)
 	if err != nil {
 		logrus.Fatalf("无法加载配置: %v", err)
@@ -105,7 +111,11 @@ func main() {
 	// 初始化日志
 	initLog(&cfg.Log)
 
-	logrus.Infof("使用配置文件: %s", absConfigPath)
+	if absConfigPath != "" {
+		logrus.Infof("使用配置文件: %s", absConfigPath)
+	} else {
+		logrus.Info("使用嵌入的默认配置")
+	}
 
 	// 创建并启动应用
 	app, err := server.NewApp(cfg)
