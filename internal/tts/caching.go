@@ -97,27 +97,36 @@ func (s *cachingService) SynthesizeSpeech(ctx context.Context, req models.TTSReq
 	currentSize := atomic.LoadInt64(&s.totalSize)
 	responseSize := int64(len(resp.AudioContent))
 	
-	// 如果设置了最大限制且添加此项会超过限制，尝试驱逐旧缓存项
+	// 如果设置了最大限制且添加此项会超过限制，尝试主动清理缓存项
 	if s.maxTotalSize > 0 && (currentSize+responseSize) > s.maxTotalSize {
 		s.logger.Debug().
 			Str("key", key).
 			Int64("current_size", currentSize).
 			Int64("response_size", responseSize).
 			Int64("max_size", s.maxTotalSize).
-			Msg("Cache size limit reached, attempting to evict old items")
+			Msg("Cache size limit reached, attempting proactive cleanup")
 		
-		// 尝试驱逐缓存项以腾出空间
-		spaceNeeded := (currentSize + responseSize) - s.maxTotalSize
-		if s.evictCacheItems(spaceNeeded) {
-			// 驱逐成功，继续缓存
+		// 主动清理策略：先尝试删除至少 10 个最老的缓存项
+		const minEvictCount = 10
+		evictedCount := s.evictOldestCacheItems(minEvictCount)
+		
+		if evictedCount > 0 {
 			s.logger.Debug().
-				Int64("space_freed", spaceNeeded).
-				Msg("Successfully evicted cache items")
-		} else {
-			// 驱逐失败或无法腾出足够空间，跳过缓存
-			s.logger.Debug().
+				Int("evicted_count", evictedCount).
+				Msg("Proactively evicted old cache items")
+		}
+		
+		// 清理后重新检查是否有足够空间
+		currentSize = atomic.LoadInt64(&s.totalSize)
+		if (currentSize + responseSize) > s.maxTotalSize {
+			// 清理后仍无法容纳新项目，跳过缓存并记录警告
+			s.logger.Warn().
 				Str("key", key).
-				Msg("Unable to free enough space, skipping cache")
+				Int64("current_size", currentSize).
+				Int64("response_size", responseSize).
+				Int64("max_size", s.maxTotalSize).
+				Int("items_evicted", evictedCount).
+				Msg("Unable to cache new item: insufficient space even after cleanup")
 			return resp, nil
 		}
 	}
@@ -130,12 +139,12 @@ func (s *cachingService) SynthesizeSpeech(ctx context.Context, req models.TTSReq
 	return resp, nil
 }
 
-// evictCacheItems 尝试驱逐足够的缓存项以腾出指定的空间
-// 返回 true 表示成功腾出足够空间，false 表示失败
-func (s *cachingService) evictCacheItems(spaceNeeded int64) bool {
+// evictOldestCacheItems 主动清理策略：删除至少 minCount 个最老的缓存项
+// 返回实际删除的缓存项数量
+func (s *cachingService) evictOldestCacheItems(minCount int) int {
 	items := s.cache.Items()
 	if len(items) == 0 {
-		return false
+		return 0
 	}
 	
 	// 将缓存项转换为切片以便排序
@@ -157,11 +166,11 @@ func (s *cachingService) evictCacheItems(spaceNeeded int64) bool {
 	}
 	
 	if len(itemList) == 0 {
-		return false
+		return 0
 	}
 	
-	// 按过期时间排序（最早过期的在前面）
-	// 如果过期时间相同，按大小排序（大的在前面，优先删除大项）
+	// 按过期时间排序（最早过期的在前面，即最老的）
+	// 如果过期时间相同，按大小排序（大的在前面，优先删除大项以腾出更多空间）
 	for i := 0; i < len(itemList)-1; i++ {
 		for j := i + 1; j < len(itemList); j++ {
 			if itemList[i].expiration > itemList[j].expiration ||
@@ -171,33 +180,32 @@ func (s *cachingService) evictCacheItems(spaceNeeded int64) bool {
 		}
 	}
 	
-	// 逐个删除缓存项，直到腾出足够空间
-	var freedSpace int64
-	evictedCount := 0
+	// 删除至少 minCount 个缓存项，但不超过现有项数
+	evictCount := minCount
+	if evictCount > len(itemList) {
+		evictCount = len(itemList)
+	}
 	
-	for _, item := range itemList {
-		if freedSpace >= spaceNeeded {
-			break
-		}
-		
+	var freedSpace int64
+	for i := 0; i < evictCount; i++ {
+		item := itemList[i]
 		s.cache.Delete(item.key)
 		freedSpace += item.size
-		evictedCount++
 		
 		s.logger.Debug().
 			Str("key", item.key).
 			Int64("size", item.size).
-			Int64("freed_space", freedSpace).
+			Int("index", i+1).
+			Int("total_to_evict", evictCount).
 			Msg("Evicted cache item")
 	}
 	
 	s.logger.Info().
-		Int("evicted_count", evictedCount).
-		Int64("space_needed", spaceNeeded).
+		Int("evicted_count", evictCount).
 		Int64("space_freed", freedSpace).
-		Msg("Cache eviction completed")
+		Msg("Proactive cache cleanup completed")
 	
-	return freedSpace >= spaceNeeded
+	return evictCount
 }
 
 // normalizeValue 标准化参数值，去除前后空格并转换为小写

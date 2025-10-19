@@ -45,12 +45,12 @@ type WorkerPool struct {
 
 // PoolMetrics 工作池性能指标
 type PoolMetrics struct {
-	TotalJobs      int64
-	CompletedJobs  int64
-	FailedJobs     int64
-	ActiveWorkers  int
-	TotalLatency   int64 // 总延迟(纳秒)
-	mu             sync.RWMutex
+	TotalJobs      int64 // 使用 atomic 操作
+	CompletedJobs  int64 // 使用 atomic 操作
+	FailedJobs     int64 // 使用 atomic 操作
+	ActiveWorkers  int   // 仅在启动/关闭时修改，保留 mutex 保护
+	TotalLatency   int64 // 使用 atomic 操作，总延迟(纳秒)
+	mu             sync.RWMutex // 仅用于保护 ActiveWorkers
 }
 
 // NewWorkerPool 创建新的工作池
@@ -142,9 +142,7 @@ func (p *WorkerPool) processJob(job *SegmentJob, workerID int) *SegmentResult {
 	if job.Context.Err() != nil {
 		result.Error = fmt.Errorf("job context cancelled before processing segment %d: %w", job.Index, job.Context.Err())
 		p.logger.Warn().Err(result.Error).Msg("Job context cancelled before processing")
-		p.metrics.mu.Lock()
-		p.metrics.FailedJobs++
-		p.metrics.mu.Unlock()
+		atomic.AddInt64(&p.metrics.FailedJobs, 1)
 		return result
 	}
 
@@ -155,9 +153,7 @@ func (p *WorkerPool) processJob(job *SegmentJob, workerID int) *SegmentResult {
 		p.logger.Error().Err(result.Error).Msg("Worker failed to synthesize segment")
 
 		// 更新失败指标
-		p.metrics.mu.Lock()
-		p.metrics.FailedJobs++
-		p.metrics.mu.Unlock()
+		atomic.AddInt64(&p.metrics.FailedJobs, 1)
 
 		return result
 	}
@@ -166,10 +162,8 @@ func (p *WorkerPool) processJob(job *SegmentJob, workerID int) *SegmentResult {
 	result.Duration = time.Since(startTime)
 	
 	// 更新完成指标和延迟统计
-	p.metrics.mu.Lock()
-	p.metrics.CompletedJobs++
-	p.metrics.TotalLatency += result.Duration.Nanoseconds()
-	p.metrics.mu.Unlock()
+	atomic.AddInt64(&p.metrics.CompletedJobs, 1)
+	atomic.AddInt64(&p.metrics.TotalLatency, result.Duration.Nanoseconds())
 	
 	p.logger.Debug().
 		Int("worker_id", workerID).
@@ -194,9 +188,7 @@ func (p *WorkerPool) Submit(job *SegmentJob) error {
 	}
 
 	// 更新提交指标
-	p.metrics.mu.Lock()
-	p.metrics.TotalJobs++
-	p.metrics.mu.Unlock()
+	atomic.AddInt64(&p.metrics.TotalJobs, 1)
 
 	// 尝试非阻塞提交
 	select {
@@ -270,15 +262,23 @@ func (p *WorkerPool) Close() {
 
 // GetMetrics 获取性能指标
 func (p *WorkerPool) GetMetrics() PoolMetrics {
+	// 使用原子操作读取计数器
+	totalJobs := atomic.LoadInt64(&p.metrics.TotalJobs)
+	completedJobs := atomic.LoadInt64(&p.metrics.CompletedJobs)
+	failedJobs := atomic.LoadInt64(&p.metrics.FailedJobs)
+	totalLatency := atomic.LoadInt64(&p.metrics.TotalLatency)
+	
+	// 只需要锁定读取 ActiveWorkers
 	p.metrics.mu.RLock()
-	defer p.metrics.mu.RUnlock()
+	activeWorkers := p.metrics.ActiveWorkers
+	p.metrics.mu.RUnlock()
 	
 	return PoolMetrics{
-		TotalJobs:     p.metrics.TotalJobs,
-		CompletedJobs: p.metrics.CompletedJobs,
-		FailedJobs:    p.metrics.FailedJobs,
-		ActiveWorkers: p.metrics.ActiveWorkers,
-		TotalLatency:  p.metrics.TotalLatency,
+		TotalJobs:     totalJobs,
+		CompletedJobs: completedJobs,
+		FailedJobs:    failedJobs,
+		ActiveWorkers: activeWorkers,
+		TotalLatency:  totalLatency,
 	}
 }
 
@@ -313,11 +313,12 @@ func (p *WorkerPool) Stats() PoolStats {
 
 // GetAverageLatency 获取平均延迟
 func (p *WorkerPool) GetAverageLatency() time.Duration {
-	p.metrics.mu.RLock()
-	defer p.metrics.mu.RUnlock()
+	// 使用原子操作读取
+	completedJobs := atomic.LoadInt64(&p.metrics.CompletedJobs)
+	totalLatency := atomic.LoadInt64(&p.metrics.TotalLatency)
 	
-	if p.metrics.CompletedJobs == 0 {
+	if completedJobs == 0 {
 		return 0
 	}
-	return time.Duration(p.metrics.TotalLatency / p.metrics.CompletedJobs)
+	return time.Duration(totalLatency / completedJobs)
 }
