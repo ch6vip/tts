@@ -70,10 +70,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
 FROM gcr.io/distroless/static
 
 # 设置标签
-LABEL maintainer="your-email@example.com" \
+LABEL maintainer="ch6vip@gmail.com" \
       org.opencontainers.image.title="TTS Service" \
       org.opencontainers.image.description="Text-to-Speech Service" \
-      org.opencontainers.image.source="https://github.com/yourusername/tts"
+      org.opencontainers.image.source="https://github.com/ch6vip/tts"
 
 # 从构建器阶段复制二进制文件
 COPY --from=builder /app/main /app/main
