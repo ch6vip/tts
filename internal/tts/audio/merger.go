@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/rs/zerolog"
 )
@@ -37,7 +36,7 @@ func NewFFmpegMerger(ffmpegPath string, logger zerolog.Logger) *FFmpegMerger {
 	}
 }
 
-// Merge 使用 FFmpeg concat demuxer 合并音频片段
+// Merge 使用 FFmpeg concat protocol 通过管道合并音频片段（零磁盘 I/O）
 func (m *FFmpegMerger) Merge(segments [][]byte) ([]byte, error) {
 	if len(segments) == 0 {
 		return nil, errors.New("no segments to merge")
@@ -54,65 +53,121 @@ func (m *FFmpegMerger) Merge(segments [][]byte) ([]byte, error) {
 		return m.simpleMerge(segments)
 	}
 	
-	// 创建临时工作目录
-	workDir, err := os.MkdirTemp(m.tmpDir, "tts_merge_*")
+	// 使用管道方式合并：通过多个 FFmpeg 进程链式处理
+	// 策略：使用 concat filter 而非 concat demuxer，完全通过管道传输
+	return m.mergeWithPipe(segments)
+}
+
+// mergeWithPipe 使用管道方式合并音频，避免磁盘 I/O
+func (m *FFmpegMerger) mergeWithPipe(segments [][]byte) ([]byte, error) {
+	// 对于两个片段的情况，使用 concat filter
+	if len(segments) == 2 {
+		return m.mergeTwoSegments(segments[0], segments[1])
+	}
+	
+	// 对于多个片段，递归两两合并
+	// 这种方法虽然需要多次调用 FFmpeg，但完全避免了磁盘 I/O
+	mid := len(segments) / 2
+	
+	// 并行合并左右两部分
+	leftMerged, err := m.mergeWithPipe(segments[:mid])
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	defer os.RemoveAll(workDir)
-	
-	// 写入音频片段到临时文件
-	var concatList bytes.Buffer
-	for i, seg := range segments {
-		tmpFile := filepath.Join(workDir, fmt.Sprintf("seg_%03d.mp3", i))
-		if err := os.WriteFile(tmpFile, seg, 0644); err != nil {
-			return nil, fmt.Errorf("failed to write segment %d: %w", i, err)
-		}
-		
-		// 写入 concat 列表（使用相对路径避免路径问题）
-		fmt.Fprintf(&concatList, "file '%s'\n", filepath.Base(tmpFile))
-	}
-	
-	// 写入 concat 列表文件
-	concatFile := filepath.Join(workDir, "concat.txt")
-	if err := os.WriteFile(concatFile, concatList.Bytes(), 0644); err != nil {
-		return nil, fmt.Errorf("failed to write concat file: %w", err)
-	}
-	
-	// 执行 FFmpeg 合并
-	outputFile := filepath.Join(workDir, "output.mp3")
-	cmd := exec.Command(
-		m.ffmpegPath,
-		"-f", "concat",
-		"-safe", "0",
-		"-i", "concat.txt",
-		"-c", "copy",      // 直接复制流，避免重新编码
-		"-y",              // 覆盖输出文件
-		outputFile,
-	)
-	cmd.Dir = workDir // 在工作目录执行命令
-	
-	// 捕获错误输出
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	
-	if err := cmd.Run(); err != nil {
-		m.logger.Error().
-			Err(err).
-			Str("stderr", stderr.String()).
-			Msg("FFmpeg merge failed")
-		// 如果 FFmpeg 失败，回退到简单合并
+		m.logger.Warn().Err(err).Msg("Left merge failed, falling back to simple merge")
 		return m.simpleMerge(segments)
 	}
 	
-	// 读取合并结果
-	merged, err := os.ReadFile(outputFile)
+	rightMerged, err := m.mergeWithPipe(segments[mid:])
 	if err != nil {
-		return nil, fmt.Errorf("failed to read merged file: %w", err)
+		m.logger.Warn().Err(err).Msg("Right merge failed, falling back to simple merge")
+		return m.simpleMerge(segments)
 	}
 	
-	m.logger.Info().Int("segments", len(segments)).Msg("Successfully merged audio segments using FFmpeg")
-	return merged, nil
+	// 合并两个已合并的部分
+	return m.mergeTwoSegments(leftMerged, rightMerged)
+}
+
+// mergeTwoSegments 使用管道合并两个音频片段
+func (m *FFmpegMerger) mergeTwoSegments(seg1, seg2 []byte) ([]byte, error) {
+	// 使用 FFmpeg concat filter 通过管道合并
+	// 命令：ffmpeg -i pipe:0 -i pipe:1 -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1" -f mp3 pipe:1
+	cmd := exec.Command(
+		m.ffmpegPath,
+		"-i", "pipe:0",           // 第一个输入从 stdin
+		"-f", "mp3",
+		"-i", "pipe:3",           // 第二个输入从 fd 3
+		"-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[out]",
+		"-map", "[out]",
+		"-f", "mp3",
+		"-c:a", "libmp3lame",     // 使用 MP3 编码器
+		"-b:a", "128k",           // 设置比特率
+		"pipe:1",                 // 输出到 stdout
+	)
+	
+	// 创建输入管道
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+	
+	// 为第二个输入创建额外的管道
+	extraPipe, extraWriter, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create extra pipe: %w", err)
+	}
+	defer extraPipe.Close()
+	
+	// 设置文件描述符 3 为第二个输入
+	cmd.ExtraFiles = []*os.File{extraPipe}
+	
+	// 创建输出缓冲区
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	
+	// 启动 FFmpeg 进程
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)
+	}
+	
+	// 在 goroutine 中写入第一个片段到 stdin
+	errChan1 := make(chan error, 1)
+	go func() {
+		defer stdin.Close()
+		_, err := stdin.Write(seg1)
+		errChan1 <- err
+	}()
+	
+	// 在另一个 goroutine 中写入第二个片段到 fd 3
+	errChan2 := make(chan error, 1)
+	go func() {
+		defer extraWriter.Close()
+		_, err := extraWriter.Write(seg2)
+		errChan2 <- err
+	}()
+	
+	// 等待写入完成
+	if err := <-errChan1; err != nil {
+		cmd.Process.Kill()
+		return nil, fmt.Errorf("failed to write first segment: %w", err)
+	}
+	
+	if err := <-errChan2; err != nil {
+		cmd.Process.Kill()
+		return nil, fmt.Errorf("failed to write second segment: %w", err)
+	}
+	
+	// 等待 FFmpeg 完成
+	if err := cmd.Wait(); err != nil {
+		m.logger.Error().
+			Err(err).
+			Str("stderr", stderr.String()).
+			Msg("FFmpeg pipe merge failed")
+		return nil, fmt.Errorf("ffmpeg merge failed: %w, stderr: %s", err, stderr.String())
+	}
+	
+	m.logger.Debug().Msg("Successfully merged two audio segments via pipe")
+	return stdout.Bytes(), nil
 }
 
 // checkFFmpeg 检查 FFmpeg 是否可用
@@ -215,7 +270,7 @@ func NewStreamMerger(ffmpegPath string, logger zerolog.Logger) *StreamMerger {
 	}
 }
 
-// MergeToWriter 将合并结果直接写入 Writer（避免内存占用）
+// MergeToWriter 将合并结果直接写入 Writer（零磁盘 I/O，避免内存占用）
 func (s *StreamMerger) MergeToWriter(segments [][]byte, writer io.Writer) error {
 	if len(segments) == 0 {
 		return errors.New("no segments to merge")
@@ -226,47 +281,118 @@ func (s *StreamMerger) MergeToWriter(segments [][]byte, writer io.Writer) error 
 		return err
 	}
 	
-	// 创建临时目录
-	workDir, err := os.MkdirTemp("", "tts_stream_*")
-	if err != nil {
-		return err
+	// 使用管道方式递归合并
+	return s.mergeToWriterWithPipe(segments, writer)
+}
+
+// mergeToWriterWithPipe 使用管道递归合并音频到 Writer
+func (s *StreamMerger) mergeToWriterWithPipe(segments [][]byte, writer io.Writer) error {
+	// 对于两个片段的情况，直接合并到 writer
+	if len(segments) == 2 {
+		return s.mergeTwoSegmentsToWriter(segments[0], segments[1], writer)
 	}
-	defer os.RemoveAll(workDir)
 	
-	// 写入片段文件
-	var concatList bytes.Buffer
-	for i, seg := range segments {
-		tmpFile := filepath.Join(workDir, fmt.Sprintf("seg_%03d.mp3", i))
-		if err := os.WriteFile(tmpFile, seg, 0644); err != nil {
+	// 对于多个片段，先合并成中间结果，再写入 writer
+	if len(segments) > 2 {
+		// 递归合并左右两部分到内存
+		mid := len(segments) / 2
+		
+		var leftBuf bytes.Buffer
+		if err := s.mergeToWriterWithPipe(segments[:mid], &leftBuf); err != nil {
 			return err
 		}
-		fmt.Fprintf(&concatList, "file '%s'\n", filepath.Base(tmpFile))
+		
+		var rightBuf bytes.Buffer
+		if err := s.mergeToWriterWithPipe(segments[mid:], &rightBuf); err != nil {
+			return err
+		}
+		
+		// 合并两个中间结果到最终 writer
+		return s.mergeTwoSegmentsToWriter(leftBuf.Bytes(), rightBuf.Bytes(), writer)
 	}
 	
-	concatFile := filepath.Join(workDir, "concat.txt")
-	if err := os.WriteFile(concatFile, concatList.Bytes(), 0644); err != nil {
-		return err
-	}
-	
-	// 使用 pipe 直接输出到 writer
+	return errors.New("invalid segment count")
+}
+
+// mergeTwoSegmentsToWriter 使用管道合并两个音频片段到 Writer
+func (s *StreamMerger) mergeTwoSegmentsToWriter(seg1, seg2 []byte, writer io.Writer) error {
+	// 使用 FFmpeg concat filter 通过管道合并
 	cmd := exec.Command(
 		s.ffmpegPath,
-		"-f", "concat",
-		"-safe", "0",
-		"-i", "concat.txt",
-		"-c", "copy",
-		"-f", "mp3",      // 输出格式
-		"pipe:1",         // 输出到 stdout
+		"-i", "pipe:0",           // 第一个输入从 stdin
+		"-f", "mp3",
+		"-i", "pipe:3",           // 第二个输入从 fd 3
+		"-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[out]",
+		"-map", "[out]",
+		"-f", "mp3",
+		"-c:a", "libmp3lame",     // 使用 MP3 编码器
+		"-b:a", "128k",           // 设置比特率
+		"pipe:1",                 // 输出到 stdout
 	)
-	cmd.Dir = workDir
+	
+	// 创建输入管道
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+	
+	// 为第二个输入创建额外的管道
+	extraPipe, extraWriter, err := os.Pipe()
+	if err != nil {
+		return fmt.Errorf("failed to create extra pipe: %w", err)
+	}
+	defer extraPipe.Close()
+	
+	// 设置文件描述符 3 为第二个输入
+	cmd.ExtraFiles = []*os.File{extraPipe}
+	
+	// 设置输出到传入的 writer
 	cmd.Stdout = writer
 	
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	
-	if err := cmd.Run(); err != nil {
+	// 启动 FFmpeg 进程
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start ffmpeg: %w", err)
+	}
+	
+	// 在 goroutine 中写入第一个片段到 stdin
+	errChan1 := make(chan error, 1)
+	go func() {
+		defer stdin.Close()
+		_, err := stdin.Write(seg1)
+		errChan1 <- err
+	}()
+	
+	// 在另一个 goroutine 中写入第二个片段到 fd 3
+	errChan2 := make(chan error, 1)
+	go func() {
+		defer extraWriter.Close()
+		_, err := extraWriter.Write(seg2)
+		errChan2 <- err
+	}()
+	
+	// 等待写入完成
+	if err := <-errChan1; err != nil {
+		cmd.Process.Kill()
+		return fmt.Errorf("failed to write first segment: %w", err)
+	}
+	
+	if err := <-errChan2; err != nil {
+		cmd.Process.Kill()
+		return fmt.Errorf("failed to write second segment: %w", err)
+	}
+	
+	// 等待 FFmpeg 完成
+	if err := cmd.Wait(); err != nil {
+		s.logger.Error().
+			Err(err).
+			Str("stderr", stderr.String()).
+			Msg("FFmpeg stream pipe merge failed")
 		return fmt.Errorf("ffmpeg stream merge failed: %w, stderr: %s", err, stderr.String())
 	}
 	
+	s.logger.Debug().Msg("Successfully merged two audio segments to writer via pipe")
 	return nil
 }
