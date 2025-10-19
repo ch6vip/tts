@@ -54,20 +54,19 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     ./cmd/api
 
 # ============================================
-# 阶段 3: 最终运行镜像 (使用 distroless/static)
+# 阶段 3: 最终运行镜像 (使用 Alpine)
 #
-# 镜像选择对比:
-# - scratch: 最小 (~0 MB),但缺少 CA 证书、时区数据等
-# - alpine: 小 (~5 MB),但包含不必要的 shell 和工具
-# - distroless/static: 最佳选择 (~2 MB),包含必要的运行时库、CA 证书、时区数据
-# - distroless/base: 较大 (~20 MB),包含 glibc,不适合静态链接的 Go 程序
-#
-# 使用 distroless/static 的优势:
-# 1. 已包含 CA 证书，支持 HTTPS 请求
-# 2. 已包含时区数据，支持时区设置
-# 3. 不包含 shell 和调试工具，安全性更高
-# 4. 镜像体积小，启动快
-FROM gcr.io/distroless/static
+# 镜像选择说明:
+# - 使用 Alpine 而不是 distroless/static,因为需要支持 FFmpeg 的动态链接库
+# - Alpine 镜像体积小 (~5 MB),包含必要的运行时库和工具
+# - 已包含 CA 证书和时区数据,支持 HTTPS 和时区设置
+FROM alpine:3.19
+
+# 安装运行时依赖
+# - ca-certificates: HTTPS 请求所需的 CA 证书
+# - tzdata: 时区数据
+# - ffmpeg: FFmpeg 运行时库和依赖
+RUN apk add --no-cache ca-certificates tzdata ffmpeg
 
 # 设置标签
 LABEL maintainer="ch6vip@gmail.com" \
@@ -75,21 +74,23 @@ LABEL maintainer="ch6vip@gmail.com" \
       org.opencontainers.image.description="Text-to-Speech Service" \
       org.opencontainers.image.source="https://github.com/ch6vip/tts"
 
-# 从构建器阶段复制二进制文件
-COPY --from=builder /app/main /app/main
-
-# 复制 FFmpeg 二进制文件到最终镜像
-COPY --from=builder /usr/bin/ffmpeg /usr/bin/ffmpeg
-
-# 注意: gcr.io/distroless/static 镜像已包含 CA 证书和时区数据
-# 不需要从构建阶段复制这些文件
-# CA 证书位置: /etc/ssl/certs/ca-certificates.crt (已包含)
-# 时区数据位置: /usr/share/zoneinfo (已包含)
+# 创建非 root 用户
+RUN addgroup -g 1000 appuser && \
+    adduser -D -u 1000 -G appuser appuser
 
 # 设置工作目录
 WORKDIR /app
 
-# 设置时区环境变量 (distroless/static 已包含时区数据)
+# 从构建器阶段复制二进制文件
+COPY --from=builder /app/main /app/main
+
+# 修改文件所有者
+RUN chown -R appuser:appuser /app
+
+# 切换到非 root 用户
+USER appuser
+
+# 设置时区环境变量
 ENV TZ=Asia/Shanghai
 
 # 设置 FFmpeg 路径环境变量
