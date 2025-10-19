@@ -238,6 +238,8 @@ func (h *TTSHandler) fillDefaultValues(req *models.TTSRequest) {
 	if req.Pitch == "" {
 		req.Pitch = h.config.TTS.DefaultPitch
 	}
+	// Format 字段不需要设置默认值，因为它将在 Microsoft Client 中处理
+	// 这里保留注释以说明为什么不为 Format 设置默认值
 }
 
 // HandleTTS 处理TTS请求
@@ -264,6 +266,7 @@ func (h *TTSHandler) HandleTTSGet(c *gin.Context) {
 		Rate:  c.Query("r"),
 		Pitch: c.Query("p"),
 		Style: c.Query("s"),
+		Format: c.Query("f"),
 	}
 
 	parseTime := time.Since(startTime)
@@ -375,6 +378,7 @@ func (h *TTSHandler) HandleReader(context *gin.Context) {
 		Rate:  context.Query("r"),
 		Pitch: context.Query("p"),
 		Style: context.Query("s"),
+		Format: context.Query("f"),
 	}
 	displayName := context.Query("n")
 
@@ -399,6 +403,10 @@ func (h *TTSHandler) HandleReader(context *gin.Context) {
 
 	if req.Style != "" {
 		urlParams = append(urlParams, fmt.Sprintf("s=%s", req.Style))
+	}
+
+	if req.Format != "" {
+		urlParams = append(urlParams, fmt.Sprintf("f=%s", req.Format))
 	}
 
 	if h.config.TTS.ApiKey != "" {
@@ -428,6 +436,7 @@ func (h *TTSHandler) HandleIFreeTime(context *gin.Context) {
 		Rate:  context.Query("r"),
 		Pitch: context.Query("p"),
 		Style: context.Query("s"),
+		Format: context.Query("f"),
 	}
 	displayName := context.Query("n")
 
@@ -455,6 +464,7 @@ func (h *TTSHandler) HandleIFreeTime(context *gin.Context) {
 		"r": req.Rate,
 		"p": req.Pitch,
 		"s": req.Style,
+		"f": req.Format,
 	}
 
 	// 如果需要API密钥认证，添加到请求参数

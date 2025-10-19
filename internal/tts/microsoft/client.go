@@ -332,7 +332,13 @@ func (c *Client) createTTSRequest(ctx context.Context, req models.TTSRequest) (*
 
 	httpReq.Header.Set("Authorization", endpoint["t"].(string))
 	httpReq.Header.Set("Content-Type", "application/ssml+xml")
-	httpReq.Header.Set("X-Microsoft-OutputFormat", c.defaultFormat)
+	
+	// 使用请求中指定的格式，如果没有则使用默认格式
+	outputFormat := req.Format
+	if outputFormat == "" {
+		outputFormat = c.defaultFormat
+	}
+	httpReq.Header.Set("X-Microsoft-OutputFormat", outputFormat)
 	httpReq.Header.Set("User-Agent", userAgent)
 
 	// 发送请求(带重试)

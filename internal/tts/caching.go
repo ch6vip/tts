@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"sync/atomic"
 	"time"
+	"tts/internal/config"
 	"tts/internal/models"
 
 	"github.com/patrickmn/go-cache"
@@ -117,13 +118,30 @@ func (s *cachingService) SynthesizeSpeech(ctx context.Context, req models.TTSReq
 func (s *cachingService) generateCacheKey(req models.TTSRequest) string {
 	hash := sha256.New()
 	
+	// 获取音频格式，优先使用请求中指定的格式，否则使用默认格式
+	cfg := config.Get()
+	format := req.Format
+	if format == "" {
+		format = cfg.TTS.DefaultFormat
+	}
+	
 	// 根据是否有 SSML 使用不同的键
 	if req.SSML != "" {
-		// SSML 优先,忽略其他参数
+		// SSML 模式：包含 SSML 内容和所有可能影响输出的参数
 		hash.Write([]byte("ssml:"))
 		hash.Write([]byte(req.SSML))
+		
+		// 即使使用 SSML，也要包含 Voice 参数，因为它可能影响默认的语言设置
+		if req.Voice != "" {
+			hash.Write([]byte("|voice:"))
+			hash.Write([]byte(req.Voice))
+		}
+		
+		// 包含音频格式，因为它直接影响输出
+		hash.Write([]byte("|format:"))
+		hash.Write([]byte(format))
 	} else {
-		// 包含所有相关字段
+		// Text 模式：包含所有相关字段
 		hash.Write([]byte("text:"))
 		hash.Write([]byte(req.Text))
 		hash.Write([]byte("|voice:"))
@@ -134,6 +152,10 @@ func (s *cachingService) generateCacheKey(req models.TTSRequest) string {
 		hash.Write([]byte(req.Pitch))
 		hash.Write([]byte("|style:"))
 		hash.Write([]byte(req.Style))
+		
+		// 包含音频格式
+		hash.Write([]byte("|format:"))
+		hash.Write([]byte(format))
 	}
 	
 	return hex.EncodeToString(hash.Sum(nil))
