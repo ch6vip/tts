@@ -180,6 +180,34 @@ async function generateSpeech(elements) {
         audioPlayer, resultSection
     } = elements;
 
+    // 空值檢查：確保所有關鍵的 DOM 元素都存在
+    const requiredElements = {
+        textInput: textInput,
+        ssmlInput: ssmlInput,
+        voiceSelect: voiceSelect,
+        styleSelect: styleSelect,
+        rateInput: rateInput,
+        pitchInput: pitchInput,
+        audioPlayer: audioPlayer,
+        resultSection: resultSection
+    };
+
+    const missingElements = [];
+    for (const [name, element] of Object.entries(requiredElements)) {
+        if (!element) {
+            missingElements.push(name);
+        }
+    }
+
+    if (missingElements.length > 0) {
+        console.error('缺少以下 DOM 元素:', missingElements);
+        showCustomAlert(
+            `頁面元素載入異常，缺少: ${missingElements.join(', ')}。請嘗試刷新頁面或聯繫管理員。`,
+            'error'
+        );
+        return;
+    }
+
     setButtonLoading(elements, true);
     saveFormData(elements);
 
