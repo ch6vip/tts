@@ -1,1 +1,1 @@
-docker buildx build --platform linux/amd64,linux/arm64 --tag zuoban/zb-tts  .. --push
+docker buildx build --platform linux/amd64,linux/arm64 --tag ch6vip/ch6vip-tts:latest -f Dockerfile.optimized . --push

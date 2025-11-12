@@ -84,7 +84,7 @@ docker run -d \
   -e TTS_API_KEY=your_api_key \
   -e TTS_REGION=eastasia \
   --restart unless-stopped \
-  ch6vip/ch6vip-tts:main
+  ch6vip/ch6vip-tts:latest
 ```
 
 ### 方式三：本地编译运行
@@ -508,7 +508,7 @@ curl http://localhost:8081/health
 
 ```bash
 # 验证配置文件
-docker run --rm -v $(pwd)/configs:/configs ch6vip/ch6vip-tts:main -config /configs/config.yaml
+docker run --rm -v $(pwd)/configs:/configs ch6vip/ch6vip-tts:latest -config /configs/config.yaml
 ```
 
 #### 2. TTS 请求失败
