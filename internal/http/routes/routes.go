@@ -65,11 +65,11 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service, logger zerolog.Logg
 	router.Use(middleware.ErrorHandler(logger)) // 错误处理中间件
 
 	// 应用基础路径前缀
-	var baseRouter gin.IRoutes
+	var baseRouter *gin.RouterGroup
 	if cfg.Server.BasePath != "" {
 		baseRouter = router.Group(cfg.Server.BasePath)
 	} else {
-		baseRouter = router
+		baseRouter = router.Group("")
 	}
 
 	// 设置静态文件服务
@@ -86,14 +86,21 @@ func SetupRoutes(cfg *config.Config, ttsService tts.Service, logger zerolog.Logg
 	// 设置API文档路由
 	baseRouter.GET("/api-doc", pagesHandler.HandleAPIDoc)
 
-	// 设置TTS API路由 - 添加认证中间件
+	// 创建 API 路由组
+	apiGroup := baseRouter.Group("/api")
 
+	// 设置TTS API路由 - 添加认证中间件
+	apiGroup.POST("/tts", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleTTS)
+	apiGroup.GET("/tts", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleTTS)
+
+	// 设置语音列表API路由
+	apiGroup.GET("/voices", voicesHandler.HandleVoices)
+
+	// 保持旧的路由以兼容现有客户端
 	baseRouter.POST("/tts", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleTTS)
 	baseRouter.GET("/tts", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleTTS)
 	baseRouter.GET("/reader.json", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleReader)
 	baseRouter.GET("ifreetime.json", middleware.TTSAuth(cfg.TTS.ApiKey), ttsHandler.HandleIFreeTime)
-
-	// 设置语音列表API路由
 	baseRouter.GET("/voices", voicesHandler.HandleVoices)
 
 	// 设置OpenAI兼容接口的处理器，添加验证中间件

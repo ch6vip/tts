@@ -3,239 +3,146 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TTS · 高品质文本转语音</title>
-    <link rel="stylesheet" href="{{.BasePath}}/static/css/output.css">
-    <link rel="stylesheet" href="{{.BasePath}}/static/css/custom.css">
+    <title>TTS · 文本转语音</title>
+    <link rel="stylesheet" href="{{.BasePath}}/static/dist/css/main.css">
     <link rel="icon" type="image/svg+xml" href="{{.BasePath}}/static/icons/favicon.svg">
-    <meta name="description" content="一个专业、易用的在线文本转语音（TTS）服务，提供高质量的语音合成能力。">
-    <script src="{{.BasePath}}/static/js/app.js"></script>
-    <style>
-        /* Google Fonts (可选，提供更好的字体效果) */
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap');
-
-        body {
-            font-family: 'Noto Sans SC', sans-serif;
-            background-color: #0d1117; /* 深邃的背景色 */
-            color: #c9d1d9;
-        }
-
-        /* 辉光背景效果 */
-        .glow-container {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            z-index: -1;
-        }
-        .glow-container::before {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 800px;
-            height: 800px;
-            transform: translate(-50%, -50%);
-            background: radial-gradient(circle, rgba(29, 78, 216, 0.15) 0%, rgba(29, 78, 216, 0) 70%);
-            animation: pulse 10s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { transform: translate(-50%, -50%) scale(0.8); opacity: 0.8; }
-            50% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
-        }
-
-        /* 卡片样式 */
-        .card {
-            background: rgba(22, 27, 34, 0.8);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid #30363d;
-            transition: all 0.3s ease;
-        }
-
-        /* 输入框、选择框样式 */
-        .form-input {
-            background-color: #0d1117;
-            border-color: #30363d;
-            color: #c9d1d9;
-            transition: all 0.2s ease;
-        }
-        .form-input:focus {
-            outline: none;
-            border-color: #2f81f7;
-            box-shadow: 0 0 0 3px rgba(47, 129, 247, 0.3);
-        }
-        select option {
-            background-color: #161b22;
-            color: #c9d1d9;
-        }
-
-        /* 主按钮样式 */
-        .btn-primary {
-            background: #238636;
-            border: 1px solid rgba(240, 246, 252, 0.1);
-            box-shadow: 0 1px 0 rgba(240, 246, 252, 0.04) inset, 0 1px 0 rgba(0, 0, 0, 0.15);
-        }
-        .btn-primary:hover {
-            background: #2ea043;
-        }
-        .btn-primary:disabled {
-            background: #30363d;
-            cursor: not-allowed;
-        }
-
-        /* 次要按钮样式 */
-        .btn-secondary {
-            background-color: #21262d;
-            border: 1px solid #30363d;
-        }
-        .btn-secondary:hover {
-            background-color: #30363d;
-            border-color: #8b949e;
-        }
-
-        /* 滑块样式 */
-        input[type="range"] {
-            -webkit-appearance: none; appearance: none;
-            height: 6px; background: #30363d; border-radius: 3px;
-        }
-        input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none;
-            width: 18px; height: 18px; border-radius: 50%; background: #c9d1d9; cursor: pointer;
-            transition: background 0.2s ease;
-        }
-        input[type="range"]::-webkit-slider-thumb:hover { background: #fff; }
-        input[type="range"]::-moz-range-thumb {
-            width: 18px; height: 18px; border-radius: 50%; background: #c9d1d9; cursor: pointer; border: none;
-            transition: background 0.2s ease;
-        }
-        input[type="range"]::-moz-range-thumb:hover { background: #fff; }
-        
-        /* 自定义音频播放器样式 */
-        audio {
-            filter: invert(1) hue-rotate(180deg) contrast(0.8);
-        }
-
-        /* 加载中动画 */
-        .loader {
-            width: 1.25rem;
-            height: 1.25rem;
-            border: 2px solid currentColor;
-            border-bottom-color: transparent;
-            border-radius: 50%;
-            display: inline-block;
-            box-sizing: border-box;
-            animation: rotation 1s linear infinite;
-        }
-        @keyframes rotation {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
+    <meta name="description" content="Neo-Brutalism 风格的文本转语音服务">
+    <script>
+        // 全局配置，由 Go 模板注入（必须在 main.js 之前）
+        window.config = {
+            basePath: "{{.BasePath}}",
+            defaultVoice: "{{.DefaultVoice}}",
+            defaultRate: "{{.DefaultRate}}",
+            defaultPitch: "{{.DefaultPitch}}",
+            defaultFormat: "{{.DefaultFormat}}",
+            defaultStyle: ""
+        };
+    </script>
+    <script type="module" src="{{.BasePath}}/static/dist/js/main.js"></script>
 </head>
 
-<body class="min-h-screen">
-    <div class="glow-container"></div>
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+<body class="min-h-screen bg-white text-black">
+    <div class="max-w-7xl mx-auto px-6 py-8">
 
+        <!-- 标题区域 -->
         <header class="text-center mb-12">
-            <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-white">
-                TTS 语音合成引擎
-            </h1>
-            <p class="mt-4 max-w-2xl mx-auto text-lg text-gray-400">
-                将文本转化为生动、自然的人声，支持多种声音与情感风格。
+            <div class="inline-block bg-brut-yellow border-3 border-black rounded-none px-8 py-4 shadow-brut mb-6">
+                <h1 class="text-5xl font-black uppercase tracking-tight">
+                    TTS 语音合成
+                </h1>
+            </div>
+            <p class="text-lg font-bold max-w-2xl mx-auto">
+                将文本转化为自然人声 · 支持多种声音与情感风格
             </p>
         </header>
 
-        <div class="grid grid-cols-1 lg:grid-cols-5 gap-8">
-            
-            <div class="lg:col-span-3">
-                <div class="card p-6 sm:p-8 rounded-xl">
-                    <div class="mb-6">
-                        <div class="flex justify-between items-center mb-2">
-                            <label for="text" class="block text-sm font-medium text-gray-400">输入内容</label>
-                            <div class="flex items-center gap-2">
-                                <label class="text-xs text-gray-500">输入模式:</label>
-                                <button id="toggleInputMode" class="btn-secondary px-3 py-1 text-xs rounded">文本模式</button>
-                            </div>
-                        </div>
-                        <div class="relative text-input-container">
-                            <textarea id="text" rows="10" class="form-input w-full p-3 rounded-md shadow-sm text-base" placeholder="在此输入需要转换的文本..."></textarea>
-                            <textarea id="ssml" rows="10" class="form-input w-full p-3 rounded-md shadow-sm text-base hidden" placeholder="在此输入 SSML 内容...&#10;&#10;示例:&#10;<speak>&#10;  <voice name='zh-CN-XiaoxiaoNeural'>&#10;    你好，<prosody rate='slow'>这是慢速语音</prosody>，&#10;    <prosody pitch='high'>这是高音调</prosody>。&#10;  </voice>&#10;</speak>"></textarea>
-                            <div class="absolute bottom-3 right-3 text-xs text-gray-500">
-                                <span id="charCount" class="char-count">0</span> / 5000
-                            </div>
-                            <div id="textInputWarning" class="text-input-warning">
-                                文本长度接近限制，建议适当缩减内容
-                            </div>
-                        </div>
-                        <div id="ssmlHelp" class="hidden mt-2 text-xs text-gray-500">
-                            <p class="mb-1">💡 SSML 提示：</p>
-                            <ul class="list-disc list-inside space-y-1">
-                                <li>使用 &lt;prosody rate="..."&gt; 调整语速（x-slow, slow, medium, fast, x-fast）</li>
-                                <li>使用 &lt;prosody pitch="..."&gt; 调整音调（x-low, low, medium, high, x-high）</li>
-                                <li>使用 &lt;break time="..."&gt; 添加停顿（如 500ms 或 1s）</li>
-                                <li>使用 &lt;emphasis level="..."&gt; 强调文本（strong, moderate, reduced）</li>
-                            </ul>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+            <!-- 左侧：输入区域 -->
+            <div class="lg:col-span-2">
+                <div class="brut-panel">
+                    <!-- 输入模式切换 -->
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="brut-text-heading text-2xl">输入内容</h2>
+                        <div class="flex items-center gap-3">
+                            <span class="text-sm font-bold uppercase">模式:</span>
+                            <button id="toggleInputMode" class="brut-btn-secondary text-xs py-2 px-4">文本模式</button>
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6">
+                    <!-- 文本输入 -->
+                    <div class="relative mb-6">
+                        <textarea id="text" rows="10" class="brut-textarea font-mono text-sm" placeholder="在此输入需要转换的文本..."></textarea>
+                        <textarea id="ssml" rows="10" class="brut-textarea font-mono text-sm hidden" placeholder="在此输入 SSML 内容...
+
+示例:
+<speak>
+  <voice name='zh-CN-XiaoxiaoNeural'>
+    你好，<prosody rate='slow'>这是慢速语音</prosody>，
+    <prosody pitch='high'>这是高音调</prosody>。
+  </voice>
+</speak>"></textarea>
+                        <div class="absolute bottom-4 right-4 flex items-center gap-2 bg-white px-3 py-1 border-2 border-black rounded-none">
+                            <span id="charCount" class="char-count font-black tabular-nums">0</span>
+                            <span class="font-bold">/</span>
+                            <span class="font-bold">5000</span>
+                        </div>
+                    </div>
+
+                    <!-- SSML 提示 -->
+                    <div id="ssmlHelp" class="hidden mb-6 bg-brut-cyan border-2 border-black rounded-none p-4">
+                        <p class="font-black uppercase mb-2">💡 SSML 提示:</p>
+                        <ul class="list-disc list-inside space-y-1 text-sm font-medium">
+                            <li>使用 &lt;prosody rate="..."&gt; 调整语速</li>
+                            <li>使用 &lt;prosody pitch="..."&gt; 调整音调</li>
+                            <li>使用 &lt;break time="..."&gt; 添加停顿</li>
+                            <li>使用 &lt;emphasis level="..."&gt; 强调文本</li>
+                        </ul>
+                    </div>
+
+                    <div class="brut-divider"></div>
+
+                    <!-- 语音选择 -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                         <div>
-                            <label for="voice" class="block text-sm font-medium text-gray-400 mb-2">选择声音</label>
-                            <div class="relative">
-                                <input type="text" id="voiceSearch" class="form-input w-full p-2.5 rounded-md mb-2" placeholder="搜索声音...">
-                                <select id="voice" class="form-input w-full p-2.5 rounded-md">
-                                    <option value="loading">加载中...</option>
-                                </select>
-                                <button id="previewVoice" class="btn-secondary mt-2 w-full py-2 rounded-md text-sm" disabled>预览声音</button>
-                            </div>
+                            <label for="voice" class="block font-black uppercase text-sm mb-3">选择声音</label>
+                            <input type="text" id="voiceSearch" class="brut-input text-sm mb-3" placeholder="🔍 搜索声音...">
+                            <select id="voice" class="brut-select text-sm">
+                                <option value="loading">加载中...</option>
+                            </select>
+                            <button id="previewVoice" class="brut-btn-cyan w-full mt-3 text-xs py-2" disabled>▶ 预览声音</button>
                         </div>
                         <div>
-                            <label for="style" class="block text-sm font-medium text-gray-400 mb-2">情感风格</label>
-                            <select id="style" class="form-input w-full p-2.5 rounded-md">
+                            <label for="style" class="block font-black uppercase text-sm mb-3">情感风格</label>
+                            <select id="style" class="brut-select text-sm">
                                 <option value="general">普通</option>
                             </select>
-                            <div id="styleDescription" class="mt-2 text-xs text-gray-500 hidden">
+                            <div id="styleDescription" class="hidden mt-3 text-xs font-medium bg-brut-yellow border-2 border-black rounded-none p-3">
                                 选择不同的情感风格来改变语音的表达方式
                             </div>
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-8">
+                    <!-- 语速/音调滑块 -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
                         <div>
-                            <label for="rate" class="block text-sm font-medium text-gray-400">语速</label>
-                            <div class="flex items-center mt-2">
-                                <input type="range" id="rate" min="-100" max="100" value="{{.DefaultRate}}" class="w-full">
-                                <span id="rateValue" class="ml-4 w-12 text-center text-sm text-gray-400">{{.DefaultRate}}%</span>
+                            <label for="rate" class="block font-black uppercase text-sm mb-3">语速</label>
+                            <div class="flex items-center gap-4">
+                                <input type="range" id="rate" min="-100" max="100" value="{{.DefaultRate}}" class="flex-1">
+                                <span id="rateValue" class="brut-tag-yellow min-w-[70px] text-center">{{.DefaultRate}}%</span>
                             </div>
                         </div>
                         <div>
-                            <label for="pitch" class="block text-sm font-medium text-gray-400">语调</label>
-                            <div class="flex items-center mt-2">
-                                <input type="range" id="pitch" min="-100" max="100" value="{{.DefaultPitch}}" class="w-full">
-                                <span id="pitchValue" class="ml-4 w-12 text-center text-sm text-gray-400">{{.DefaultPitch}}%</span>
+                            <label for="pitch" class="block font-black uppercase text-sm mb-3">音调</label>
+                            <div class="flex items-center gap-4">
+                                <input type="range" id="pitch" min="-100" max="100" value="{{.DefaultPitch}}" class="flex-1">
+                                <span id="pitchValue" class="brut-tag-pink min-w-[70px] text-center">{{.DefaultPitch}}%</span>
                             </div>
                         </div>
                     </div>
 
-                    <button id="speak" class="btn-primary w-full flex items-center justify-center gap-x-3 py-3 text-base font-semibold rounded-md transition-all">
-                        <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M7 17H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2v10Zm2 2h2a1 1 0 0 0 1-1v-1a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1Zm10.298-9.942a1 1 0 0 0-1.09.218L15 13.11V4a1 1 0 0 0-2 0v2.11l-3.21-3.832a1 1 0 0 0-1.58.125l-2.4 4A1 1 0 0 0 7 8h2a1 1 0 0 0 .89-.55l1.6-2.667 3.01 3.613a1 1 0 0 0 .8.4H17a1 1 0 0 0 .89-1.447l-1.6-2.666 1.708-2.05a1 1 0 0 0-1.12-1.664L14 7.234V9a1 1 0 0 0 2 0v-2.11l1.298-1.557a1 1 0 0 0 .22-1.09l-.7-1.226a1 1 0 0 0-1.366-.363L12 5.11V4a1 1 0 1 0-2 0v1.11L6.79.278a1 1 0 0 0-1.09-.218l-2.4 1.2a1 1 0 0 0-.472 1.366L6.29 9.308a1 1 0 0 0 1.366.472l.7-.35-1.92 3.2a1 1 0 0 0 .89 1.447H9v3a1 1 0 0 0 2 0v-3.11l1.79 2.148a1 1 0 0 0 1.58-.125l2.4-4a1 1 0 0 0-.22-1.31zM19.5 21a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/></svg>
-                        <span>立即合成</span>
+                    <!-- 合成按钮 -->
+                    <button id="speak" class="brut-btn-primary w-full text-lg py-4 flex items-center justify-center gap-3">
+                        <svg class="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                        </svg>
+                        <span>立即合成语音</span>
                     </button>
                 </div>
             </div>
 
-            <div class="lg:col-span-2 space-y-8">
-                <div id="resultSection" class="card p-6 sm:p-8 rounded-xl hidden">
-                    <h3 class="text-xl font-semibold text-white mb-4">合成结果</h3>
-                    <div class="space-y-4">
-                        <div class="audio-player-container">
-                            <audio id="audioPlayer" class="hidden"></audio>
-                            <div class="audio-player-controls">
-                                <button id="playPauseBtn" class="audio-player-button">
+            <!-- 右侧：结果区 + 监控区 -->
+            <div class="space-y-8">
+                <!-- 合成结果 -->
+                <div id="resultSection" class="hidden">
+                    <div class="brut-panel bg-brut-cyan">
+                        <h3 class="brut-text-heading text-xl mb-4">合成结果</h3>
+
+                        <!-- 音频播放器 -->
+                        <div class="brut-audio-player bg-white mb-4">
+                            <audio id="audioPlayer"></audio>
+                            <div class="brut-audio-controls">
+                                <button id="playPauseBtn" class="brut-audio-button">
                                     <svg id="playIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
                                         <path d="M8 5v14l11-7z"/>
                                     </svg>
@@ -243,27 +150,27 @@
                                         <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
                                     </svg>
                                 </button>
-                                <div class="audio-player-progress" id="progressBar">
-                                    <div class="audio-player-progress-bar" id="progressBarFill"></div>
-                                    <div class="audio-player-progress-handle" id="progressHandle"></div>
+                                <div class="brut-audio-progress" id="progressBar">
+                                    <div class="brut-audio-progress-bar" id="progressBarFill"></div>
+                                    <div class="brut-audio-progress-handle" id="progressHandle"></div>
                                 </div>
-                                <div class="audio-player-time">
+                                <div class="brut-audio-time">
                                     <span id="currentTime">0:00</span> / <span id="duration">0:00</span>
                                 </div>
                             </div>
-                            <div class="audio-player-controls">
-                                <div class="audio-player-volume">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                            <div class="brut-audio-controls">
+                                <div class="brut-audio-volume">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
                                     </svg>
-                                    <div class="audio-player-volume-slider" id="volumeSlider">
-                                        <div class="audio-player-volume-bar" id="volumeBar"></div>
-                                        <div class="audio-player-volume-handle" id="volumeHandle"></div>
+                                    <div class="brut-audio-volume-slider" id="volumeSlider">
+                                        <div class="brut-audio-volume-bar" id="volumeBar"></div>
+                                        <div class="brut-audio-volume-handle" id="volumeHandle"></div>
                                     </div>
                                 </div>
-                                <div class="audio-player-speed">
-                                    <span style="color: #8b949e; font-size: 12px;">速度:</span>
-                                    <select id="playbackSpeed" class="audio-player-speed-select">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs font-black uppercase">速度:</span>
+                                    <select id="playbackSpeed" class="brut-input text-xs px-2 py-1">
                                         <option value="0.5">0.5x</option>
                                         <option value="0.75">0.75x</option>
                                         <option value="1" selected>1x</option>
@@ -274,76 +181,86 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="grid grid-cols-2 sm:grid-cols-2 gap-3">
-                            <button id="download" class="btn-secondary flex items-center justify-center gap-x-2 py-2 rounded-md">下载音频</button>
-                            <button id="copyLink" class="btn-secondary flex items-center justify-center gap-x-2 py-2 rounded-md">复制链接</button>
-                            <button id="copyHttpTtsLink" class="btn-secondary flex items-center justify-center gap-x-2 py-2 rounded-md">导入「阅读」</button>
-                            <button id="copyIfreetimeLink" class="btn-secondary flex items-center justify-center gap-x-2 py-2 rounded-md">导入「爱阅记」</button>
+
+                        <!-- 操作按钮 -->
+                        <div class="grid grid-cols-2 gap-3">
+                            <button id="download" class="brut-btn-secondary text-xs py-2">📥 下载</button>
+                            <button id="copyLink" class="brut-btn-secondary text-xs py-2">🔗 复制</button>
+                            <button id="copyHttpTtsLink" class="brut-btn-green text-xs py-2">📖 阅读</button>
+                            <button id="copyIfreetimeLink" class="brut-btn-pink text-xs py-2">📚 爱阅记</button>
                         </div>
                     </div>
                 </div>
 
-                <div class="card p-6 sm:p-8 rounded-xl">
+                <!-- 系统监控 -->
+                <div class="brut-panel">
                     <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-xl font-semibold text-white">系统监控</h3>
-                        <a href="{{.BasePath}}/metrics" target="_blank" class="text-sm text-blue-400 hover:underline">API</a>
+                        <h3 class="brut-text-heading text-xl">系统监控</h3>
+                        <a href="{{.BasePath}}/metrics" target="_blank" class="brut-tag-cyan text-xs">API</a>
                     </div>
-                    <div id="metrics-container" class="text-sm text-gray-400 space-y-3">
-                        <p>加载中...</p>
+                    <div id="metrics-container" class="space-y-3">
+                        <div class="brut-kpi-card bg-brut-yellow">
+                            <div class="brut-kpi-label">请求总数</div>
+                            <div class="brut-kpi-value">-</div>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
-        
-        <footer class="text-center mt-16">
-            <a href="{{.BasePath}}/api-doc" class="text-sm text-gray-500 hover:text-gray-400 transition">API 文档</a>
-            <span class="text-gray-600 mx-2">&middot;</span>
-            <button id="historyToggle" class="text-sm text-gray-500 hover:text-gray-400 transition bg-transparent border-none cursor-pointer">历史记录</button>
-            <span class="text-gray-600 mx-2">&middot;</span>
-            <p class="inline text-sm text-gray-500">&copy; 2025 TTS 服务</p>
+
+        <!-- 页脚 -->
+        <footer class="text-center mt-16 pb-8">
+            <div class="flex justify-center items-center gap-4 flex-wrap">
+                <a href="{{.BasePath}}/api-doc" class="brut-tag-cyan text-xs hover:shadow-brut-sm hover:translate-x-[-2px] hover:translate-y-[-2px] transition-all">API 文档</a>
+                <button id="historyToggle" class="brut-tag-pink text-xs hover:shadow-brut-sm hover:translate-x-[-2px] hover:translate-y-[-2px] transition-all">📜 历史记录</button>
+                <span class="brut-tag text-xs">© 2025 TTS</span>
+            </div>
         </footer>
 
     </div>
 
-    <!-- 加载状态遮罩 -->
-    <div id="loadingOverlay" class="loading-overlay">
-        <div class="loading-spinner"></div>
-        <div class="loading-text">正在处理您的请求...</div>
+    <!-- 加载遮罩 -->
+    <div id="loadingOverlay" class="brut-loading-overlay">
+        <div class="text-center">
+            <div class="brut-spinner"></div>
+            <div class="brut-loading-text">正在处理中...</div>
+        </div>
     </div>
 
     <!-- 历史记录面板 -->
-    <div id="historyPanel" class="history-panel">
-        <div class="history-panel-header">
-            <h3 class="history-panel-title">历史记录</h3>
-            <button id="historyPanelClose" class="history-panel-close">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                    <path d="M12 10.586l4.95-4.95 1.414 1.414-4.95 4.95 4.95 4.95-1.414 1.414-4.95-4.95-4.95 4.95-1.414-1.414 4.95-4.95-4.95-4.95L7.05 5.636z"/>
+    <div id="historyPanel" class="brut-history-panel">
+        <div class="brut-history-header">
+            <h3 class="brut-history-title">历史记录</h3>
+            <button id="historyPanelClose" class="brut-history-close">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                 </svg>
             </button>
         </div>
-        <div id="historyPanelContent" class="history-panel-content">
-            <div class="history-empty">暂无历史记录</div>
+        <div id="historyPanelContent" class="brut-history-content">
+            <div class="brut-history-empty">暂无历史记录</div>
         </div>
     </div>
 
     <!-- 快捷键提示 -->
-    <div class="shortcut-hint">
-        <span>快捷键:</span>
-        <span><span class="shortcut-key">Ctrl</span>+<span class="shortcut-key">Enter</span> 合成语音</span>
-        <span><span class="shortcut-key">Ctrl</span>+<span class="shortcut-key">H</span> 历史记录</span>
+    <div class="brut-shortcut-hint">
+        <span class="font-black uppercase text-sm">快捷键:</span>
+        <div class="flex gap-2">
+            <span class="brut-shortcut-key">Ctrl</span>
+            <span class="font-black">+</span>
+            <span class="brut-shortcut-key">Enter</span>
+            <span class="font-medium text-sm">合成</span>
+        </div>
+        <div class="flex gap-2">
+            <span class="brut-shortcut-key">Ctrl</span>
+            <span class="font-black">+</span>
+            <span class="brut-shortcut-key">H</span>
+            <span class="font-medium text-sm">历史</span>
+        </div>
     </div>
 
-    <div id="custom-alert-container"></div>
+    <!-- 提示容器 -->
+    <div id="custom-alert-container" class="fixed top-6 right-6 z-50 space-y-3"></div>
 
-    <script>
-        // 全局配置，由Go模板注入
-        const config = {
-            basePath: "{{.BasePath}}",
-            defaultVoice: "{{.DefaultVoice}}",
-            defaultRate: "{{.DefaultRate}}",
-            defaultPitch: "{{.DefaultPitch}}",
-            defaultStyle: ""
-        };
-    </script>
 </body>
 </html>

@@ -36,6 +36,7 @@ func (h *PagesHandler) HandleIndex(c *gin.Context) {
 		"DefaultVoice": h.config.TTS.DefaultVoice,
 		"DefaultRate":  h.config.TTS.DefaultRate,
 		"DefaultPitch": h.config.TTS.DefaultPitch,
+		"DefaultFormat": h.config.TTS.DefaultFormat,
 	}
 
 	// 设置内容类型

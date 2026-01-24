@@ -1,0 +1,423 @@
+/* Tailwind CSS 基础样式 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   NEO-BRUTALISM 风格规范
+   - 黑色实线边框 (2-3px)
+   - 零圆角 (rounded-none)
+   - 硬阴影 (无模糊位移型)
+   - 纯色块配色
+   - 高对比度
+   ============================================ */
+
+/* 自定义基础样式 */
+@layer base {
+  body {
+    @apply min-h-screen bg-white text-black;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    @apply border-black;
+  }
+
+  ::selection {
+    @apply bg-brut-yellow text-black;
+  }
+}
+
+/* Neo-Brutalism 组件样式 */
+@layer components {
+
+  /* ========== 卡片样式 ========== */
+  .brut-card {
+    @apply bg-white border-4 border-black rounded-none shadow-brut;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .brut-card:hover {
+    @apply shadow-brut-lg;
+    transform: translate(-2px, -2px);
+  }
+
+  /* ========== 按钮样式 ========== */
+  .brut-btn {
+    @apply px-6 py-3 font-black uppercase tracking-wide border-4 border-black rounded-none shadow-brut;
+    @apply transition-all duration-150 cursor-pointer;
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  .brut-btn:hover:not(:disabled) {
+    @apply shadow-brut-hover;
+    transform: translate(-2px, -2px);
+  }
+
+  .brut-btn:active:not(:disabled) {
+    @apply shadow-brut-active;
+    transform: translate(3px, 3px);
+  }
+
+  .brut-btn:disabled {
+    @apply opacity-50 cursor-not-allowed;
+    transform: none !important;
+  }
+
+  .brut-btn-primary {
+    @apply brut-btn bg-brut-yellow text-black;
+  }
+
+  .brut-btn-secondary {
+    @apply brut-btn bg-white text-black;
+  }
+
+  .brut-btn-cyan {
+    @apply brut-btn bg-brut-cyan text-black;
+  }
+
+  .brut-btn-pink {
+    @apply brut-btn bg-brut-pink text-black;
+  }
+
+  .brut-btn-green {
+    @apply brut-btn bg-brut-green text-black;
+  }
+
+  /* ========== 输入框样式 ========== */
+  .brut-input {
+    @apply w-full px-4 py-3 bg-white border-2 border-black rounded-none;
+    @apply text-black font-medium transition-all duration-150;
+    @apply focus:outline-none focus:ring-4 focus:ring-black focus:ring-offset-2 focus:ring-offset-white;
+  }
+
+  .brut-textarea {
+    @apply brut-input resize-none;
+    font-family: 'Courier New', monospace;
+  }
+
+  .brut-select {
+    @apply brut-input cursor-pointer appearance-none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23000' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 40px;
+  }
+
+  /* ========== 标签/徽章样式 ========== */
+  .brut-tag {
+    @apply inline-block px-3 py-1 border-2 border-black rounded-none;
+    @apply font-black uppercase text-xs tracking-wide;
+  }
+
+  .brut-tag-yellow {
+    @apply brut-tag bg-brut-yellow text-black;
+  }
+
+  .brut-tag-cyan {
+    @apply brut-tag bg-brut-cyan text-black;
+  }
+
+  .brut-tag-pink {
+    @apply brut-tag bg-brut-pink text-black;
+  }
+
+  /* ========== KPI 卡片样式 ========== */
+  .brut-kpi-card {
+    @apply bg-white border-4 border-black rounded-none p-6 shadow-brut;
+  }
+
+  .brut-kpi-label {
+    @apply text-sm font-bold uppercase tracking-wide mb-2;
+  }
+
+  .brut-kpi-value {
+    @apply text-4xl font-black tabular-nums;
+  }
+
+  /* ========== 面板样式 ========== */
+  .brut-panel {
+    @apply bg-white border-4 border-black rounded-none shadow-brut p-6;
+  }
+
+  /* ========== 加载状态 ========== */
+  .brut-loading-overlay {
+    @apply fixed inset-0 bg-white/90 backdrop-blur-sm flex items-center justify-center z-50;
+    @apply opacity-0 pointer-events-none transition-opacity duration-200;
+  }
+
+  .brut-loading-overlay.show {
+    @apply opacity-100 pointer-events-auto;
+  }
+
+  .brut-spinner {
+    @apply w-16 h-16 border-4 border-black border-t-brut-yellow rounded-none animate-spin;
+  }
+
+  .brut-loading-text {
+    @apply mt-6 text-xl font-black uppercase tracking-wide;
+  }
+
+  /* ========== 提示框样式 ========== */
+  .brut-alert {
+    @apply flex items-center gap-3 px-5 py-4 border-4 border-black rounded-none shadow-brut mb-4;
+    @apply font-bold;
+  }
+
+  .brut-alert-success {
+    @apply brut-alert bg-brut-green text-black;
+  }
+
+  .brut-alert-error {
+    @apply brut-alert bg-brut-pink text-black;
+  }
+
+  .brut-alert-warning {
+    @apply brut-alert bg-brut-yellow text-black;
+  }
+
+  .brut-alert-info {
+    @apply brut-alert bg-brut-cyan text-black;
+  }
+
+  /* ========== 历史记录面板 ========== */
+  .brut-history-panel {
+    @apply fixed top-0 right-0 h-full w-96 bg-white border-l-4 border-black shadow-brut-xl z-50;
+    @apply transform translate-x-full transition-transform duration-300;
+  }
+
+  .brut-history-panel.open {
+    @apply translate-x-0;
+  }
+
+  .brut-history-header {
+    @apply flex items-center justify-between p-6 border-b-4 border-black bg-brut-yellow;
+  }
+
+  .brut-history-title {
+    @apply text-2xl font-black uppercase tracking-tight;
+  }
+
+  .brut-history-close {
+    @apply w-10 h-10 flex items-center justify-center bg-white border-2 border-black rounded-none;
+    @apply cursor-pointer transition-all duration-150;
+    @apply hover:shadow-brut-sm hover:translate-x-[-2px] hover:translate-y-[-2px];
+    @apply active:shadow-none active:translate-x-0 active:translate-y-0;
+  }
+
+  .brut-history-content {
+    @apply p-6 overflow-y-auto;
+    max-height: calc(100vh - 100px);
+  }
+
+  .brut-history-item {
+    @apply p-4 mb-4 bg-white border-2 border-black rounded-none;
+    @apply cursor-pointer transition-all duration-150;
+    @apply hover:shadow-brut hover:translate-x-[-3px] hover:translate-y-[-3px];
+  }
+
+  .brut-history-item-text {
+    @apply font-bold mb-2 line-clamp-2;
+  }
+
+  .brut-history-item-meta {
+    @apply flex justify-between text-xs font-medium uppercase tracking-wide opacity-60;
+  }
+
+  .brut-history-empty {
+    @apply text-center py-12 font-bold uppercase tracking-wide opacity-40;
+  }
+
+  /* ========== 音频播放器 ========== */
+  .brut-audio-player {
+    @apply bg-brut-cyan border-4 border-black rounded-none p-6 shadow-brut;
+  }
+
+  .brut-audio-controls {
+    @apply flex items-center gap-4 mb-4;
+  }
+
+  .brut-audio-button {
+    @apply w-12 h-12 flex items-center justify-center bg-black text-white border-4 border-black rounded-none;
+    @apply cursor-pointer transition-all duration-150;
+    @apply hover:shadow-brut-sm hover:translate-x-[-2px] hover:translate-y-[-2px];
+    @apply active:shadow-none active:translate-x-0 active:translate-y-0;
+  }
+
+  .brut-audio-progress {
+    @apply flex-1 h-8 bg-white border-2 border-black rounded-none cursor-pointer relative overflow-hidden;
+  }
+
+  .brut-audio-progress-bar {
+    @apply h-full bg-brut-yellow border-r-2 border-black transition-all;
+  }
+
+  .brut-audio-progress-handle {
+    @apply absolute top-1/2 -translate-y-1/2 w-6 h-6 bg-black border-2 border-black rounded-none;
+    @apply cursor-grab active:cursor-grabbing;
+  }
+
+  .brut-audio-time {
+    @apply text-sm font-black tabular-nums min-w-[100px] text-center uppercase;
+  }
+
+  .brut-audio-volume {
+    @apply flex items-center gap-3;
+  }
+
+  .brut-audio-volume-slider {
+    @apply w-24 h-6 bg-white border-2 border-black rounded-none cursor-pointer relative overflow-hidden;
+  }
+
+  .brut-audio-volume-bar {
+    @apply h-full bg-black transition-all;
+  }
+
+  .brut-audio-volume-handle {
+    @apply absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-brut-pink border-2 border-black rounded-none;
+    @apply cursor-grab active:cursor-grabbing;
+  }
+
+  /* ========== 滑块样式 ========== */
+  .brut-range-container {
+    @apply relative w-full;
+  }
+
+  .brut-range-track {
+    @apply w-full h-8 bg-white border-2 border-black rounded-none relative;
+  }
+
+  .brut-range-fill {
+    @apply h-full bg-brut-yellow border-r-2 border-black;
+  }
+
+  .brut-range-thumb {
+    @apply absolute top-1/2 -translate-y-1/2 w-6 h-6 bg-black border-2 border-black rounded-none;
+    @apply cursor-grab active:cursor-grabbing;
+  }
+
+  input[type="range"] {
+    @apply appearance-none w-full h-8 bg-white border-2 border-black rounded-none cursor-pointer;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    @apply appearance-none w-8 h-8 bg-black border-2 border-black rounded-none cursor-pointer;
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    @apply w-8 h-8 bg-black border-2 border-black rounded-none cursor-pointer;
+  }
+
+  input[type="range"]::-webkit-slider-runnable-track {
+    @apply h-8 bg-white border-2 border-black rounded-none;
+  }
+
+  input[type="range"]::-moz-range-track {
+    @apply h-8 bg-white border-2 border-black rounded-none;
+  }
+
+  /* ========== 字符计数警告 ========== */
+  .char-count {
+    @apply font-black tabular-nums;
+  }
+
+  .char-count.warning {
+    @apply text-orange-600;
+  }
+
+  .char-count.danger {
+    @apply text-red-600;
+  }
+
+  /* ========== 快捷键提示 ========== */
+  .brut-shortcut-hint {
+    @apply fixed bottom-6 right-6 bg-white border-4 border-black rounded-none px-6 py-4 shadow-brut;
+    @apply flex items-center gap-4 font-bold;
+  }
+
+  .brut-shortcut-key {
+    @apply bg-black text-white px-3 py-1 border-2 border-black rounded-none;
+    @apply font-black uppercase text-xs tracking-wide;
+  }
+
+  /* ========== 工具类 ========== */
+  .brut-divider {
+    @apply border-t-4 border-black my-6;
+  }
+
+  .brut-text-heading {
+    @apply font-black uppercase tracking-tight;
+  }
+
+  .brut-text-body {
+    @apply font-medium leading-relaxed;
+  }
+}
+
+/* ========== 自定义滚动条 ========== */
+::-webkit-scrollbar {
+  @apply w-3;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-white border-l-2 border-black;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-black border-2 border-black rounded-none;
+  @apply hover:bg-brut-yellow;
+}
+
+/* ========== Select 下拉选项样式 ========== */
+select option {
+  @apply bg-white text-black font-medium;
+}
+
+/* ========== 焦点可见性 ========== */
+*:focus-visible {
+  @apply outline-none ring-4 ring-black ring-offset-2;
+}
+
+/* ========== 禁用项目 ========== */
+.disabled,
+[disabled] {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+/* ========== 隐藏辅助类 ========== */
+/* .hidden 类由 Tailwind 提供，无需重复定义 */
+
+/* ========== 音频元素默认隐藏 ========== */
+audio {
+  @apply hidden;
+}
+
+/* ========== 动画 ========== */
+@keyframes brutSlideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes brutBounce {
+  0%, 100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(-4px, -4px);
+  }
+}
+
+.brut-animate-slide-in {
+  animation: brutSlideIn 0.3s ease-out;
+}
+
+.brut-animate-bounce {
+  animation: brutBounce 0.6s ease-in-out infinite;
+}
