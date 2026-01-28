@@ -19,8 +19,13 @@ func ErrorHandler(logger zerolog.Logger) gin.HandlerFunc {
 			err := c.Errors.Last().Err
 
 			// 记录错误日志
-			traceID, _ := c.Get("trace_id")
-			log := logger.With().Str("trace_id", traceID.(string)).Logger()
+			traceID := "unknown"
+			if v, ok := c.Get("trace_id"); ok {
+				if s, ok := v.(string); ok && s != "" {
+					traceID = s
+				}
+			}
+			log := logger.With().Str("trace_id", traceID).Logger()
 			log.Error().Err(err).Msg("请求处理时发生错误")
 
 			// 根据错误类型映射到 HTTP 状态码和响应

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"time"
 	"tts/internal/config"
 )
 
@@ -17,9 +18,24 @@ type Server struct {
 // New 创建新的HTTP服务器
 func New(cfg *config.Config, router *gin.Engine) *Server {
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+
+	readTimeout := time.Duration(cfg.Server.ReadTimeout) * time.Second
+	writeTimeout := time.Duration(cfg.Server.WriteTimeout) * time.Second
+	if readTimeout <= 0 {
+		readTimeout = 60 * time.Second
+	}
+	if writeTimeout <= 0 {
+		writeTimeout = 60 * time.Second
+	}
+
 	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: router,
+		Addr:              addr,
+		Handler:           router,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1MiB
 	}
 	return &Server{
 		httpServer: httpServer,

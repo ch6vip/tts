@@ -15,13 +15,13 @@ import (
 
 // LongTextTTSService 长文本 TTS 服务
 type LongTextTTSService struct {
-	client       *microsoft.Client
-	segmenter    SegmentationStrategy
-	merger       audio.Merger
-	workerPool   *WorkerPool
-	maxSegmentLen int
+	client          *microsoft.Client
+	segmenter       SegmentationStrategy
+	merger          audio.Merger
+	workerPool      *WorkerPool
+	maxSegmentLen   int
 	minTextForSplit int // 触发分段的最小文本长度
-	logger       zerolog.Logger
+	logger          zerolog.Logger
 }
 
 // LongTextConfig 长文本处理配置
@@ -106,7 +106,7 @@ func (s *LongTextTTSService) synthesizeLongText(ctx context.Context, req models.
 	segmentStart := time.Now()
 	segments := s.segmenter.Segment(req.Text, s.maxSegmentLen)
 	segmentDuration := time.Since(segmentStart)
-	
+
 	s.logger.Info().
 		Int("parts", len(segments)).
 		Dur("duration", segmentDuration).
@@ -125,26 +125,26 @@ func (s *LongTextTTSService) synthesizeLongText(ctx context.Context, req models.
 func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, req models.TTSRequest, segments []string, startTime time.Time, segmentDuration time.Duration) (*models.TTSResponse, error) {
 	segmentCount := len(segments)
 	jobID := fmt.Sprintf("job_%d", time.Now().UnixNano())
-	
+
 	// 创建通道用于任务提交和结果收集
 	submitDone := make(chan struct{})
 	resultChan := make(chan *SegmentResult, segmentCount) // 使用缓冲通道提高效率
-	errChan := make(chan error, 1) // 用于传递错误
-	
+	errChan := make(chan error, 1)                        // 用于传递错误
+
 	// 使用 WaitGroup 来跟踪所有 goroutine 的完成
 	var wg sync.WaitGroup
 	wg.Add(2) // 一个用于提交任务，一个用于收集结果
-	
+
 	// 初始化音频片段数组
 	audioSegments := make([][]byte, segmentCount)
 	var totalAudioSize int64
 	var mu sync.Mutex // 保护共享变量
-	
+
 	// 启动任务提交 goroutine
 	go func() {
 		defer wg.Done()
 		defer close(submitDone)
-		
+
 		for idx, segment := range segments {
 			// 检查 context
 			if ctx.Err() != nil {
@@ -155,19 +155,19 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 				errChan <- fmt.Errorf("context cancelled during job submission: %w", ctx.Err())
 				return
 			}
-			
+
 			job := &SegmentJob{
 				ID:      fmt.Sprintf("%s_seg_%d", jobID, idx),
 				Index:   idx,
 				Context: ctx, // 传递请求上下文
 				Request: models.TTSRequest{
-					Text:  segment,
-					Voice: req.Voice,
-					Rate:  req.Rate,
-					Pitch: req.Pitch,
-					Style: req.Style,
+					Text:   segment,
+					Voice:  req.Voice,
+					Rate:   req.Rate,
+					Pitch:  req.Pitch,
+					Style:  req.Style,
 					Format: req.Format, // 确保包含格式参数
-					SSML:  "", // 分段时使用 Text，不使用 SSML
+					SSML:   "",         // 分段时使用 Text，不使用 SSML
 				},
 			}
 
@@ -181,14 +181,14 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 			}
 		}
 	}()
-	
+
 	// 启动结果收集 goroutine
 	go func() {
 		defer wg.Done()
 		defer close(resultChan)
-		
+
 		receivedCount := 0
-		
+
 		// 使用结果收集循环，直到收到所有提交任务的结果或 context 取消
 		for receivedCount < segmentCount {
 			select {
@@ -199,7 +199,7 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 						receivedCount, segmentCount)
 					return
 				}
-				
+
 				// 将结果转发到结果通道
 				select {
 				case resultChan <- result:
@@ -207,22 +207,22 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 					errChan <- fmt.Errorf("context cancelled during result forwarding: %w", ctx.Err())
 					return
 				}
-				
+
 				receivedCount++
-				
+
 			case <-ctx.Done():
 				errChan <- fmt.Errorf("context cancelled during result collection: %w", ctx.Err())
 				return
 			}
 		}
 	}()
-	
+
 	// 主 goroutine 处理结果
 	collectStart := time.Now()
 	errorCount := 0
 	var firstError error
 	receivedCount := 0
-	
+
 	// 等待任务提交完成
 	select {
 	case <-submitDone:
@@ -232,13 +232,13 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 	case err := <-errChan:
 		return nil, err
 	}
-	
+
 	submitDuration := time.Since(startTime) - segmentDuration
 	s.logger.Info().
 		Int("jobs", segmentCount).
 		Dur("duration", submitDuration).
 		Msg("Submitted jobs")
-	
+
 	// 处理结果
 	for receivedCount < segmentCount {
 		select {
@@ -248,7 +248,7 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 				return nil, fmt.Errorf("result channel closed unexpectedly, received %d/%d results",
 					receivedCount, segmentCount)
 			}
-			
+
 			if result.Error != nil {
 				errorCount++
 				if firstError == nil {
@@ -262,13 +262,13 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 				if result.Index < 0 || result.Index >= len(audioSegments) {
 					return nil, fmt.Errorf("invalid segment index: %d", result.Index)
 				}
-				
+
 				// 使用互斥锁保护共享变量
 				mu.Lock()
 				audioSegments[result.Index] = result.AudioData
 				totalAudioSize += int64(len(result.AudioData))
 				mu.Unlock()
-				
+
 				s.logger.Debug().
 					Int("segment", result.Index+1).
 					Int("total", segmentCount).
@@ -277,18 +277,18 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 					Msg("Received segment")
 			}
 			receivedCount++
-		
+
 		case err := <-errChan:
 			return nil, err
-			
+
 		case <-ctx.Done():
 			return nil, fmt.Errorf("context cancelled during result processing: %w", ctx.Err())
 		}
 	}
-	
+
 	// 等待所有 goroutine 完成
 	wg.Wait()
-	
+
 	collectDuration := time.Since(collectStart)
 	s.logger.Info().
 		Int("segments", segmentCount).
@@ -301,7 +301,7 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 		return nil, fmt.Errorf("synthesis failed: %d/%d segments failed, first error: %w",
 			errorCount, segmentCount, firstError)
 	}
-	
+
 	// 验证所有片段都已收集
 	for idx, segment := range audioSegments {
 		if segment == nil {
@@ -318,7 +318,7 @@ func (s *LongTextTTSService) processSegmentsConcurrently(ctx context.Context, re
 
 	mergeDuration := time.Since(mergeStart)
 	totalDuration := time.Since(startTime)
-	
+
 	s.logger.Info().
 		Dur("total_duration", totalDuration).
 		Dur("segment_duration", segmentDuration).

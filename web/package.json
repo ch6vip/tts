@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "build:css": "tailwindcss -i ./web/src/css/input.css -o ./web/static/css/output.css --minify"
+    "build:css": "tailwindcss -i ./static/css/input.css -o ./static/css/output.css --minify"
   },
   "devDependencies": {
     "@vitejs/plugin-legacy": "^5.4.0",
